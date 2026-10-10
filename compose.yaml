@@ -1,0 +1,15 @@
+services:
+  kangaroo:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    image: kangaroo-jev
+    network_mode: host
+    ipc: host
+    environment:
+      - TYPESAFE_API_KEY
+      - DISPLAY=${VIEWER_DISPLAY:-}  # headless by default; see README to watch the MuJoCo viewer
+      - ROS_DOMAIN_ID=42
+    volumes:
+      - .:/kangaroo_jev
+      - /tmp/.X11-unix:/tmp/.X11-unix
