@@ -44,10 +44,10 @@ One `Choice` question per step (`kangaroo_jev/brains.py`); the state is built by
 
 ```json
 {
+  "goal": {"visible": true, "distance_m": 6.3, "bearing_deg": 0},
   "free_distance_m": {"left": 2.1, "ahead": 2.1, "right": 3.5},
   "drop_distance_m": {"left": 0.8, "ahead": 4.0, "right": 0.8},
   "objects": [{"label": "person", "confidence": 0.86, "distance_m": 2.1, "bearing_deg": 12, "side": "ahead"}],
-  "goal": {"distance_m": 6.5, "bearing_deg": 0},
   "recent_actions": ["forward", "forward"]
 }
 ```
@@ -56,7 +56,8 @@ One `Choice` question per step (`kangaroo_jev/brains.py`); the state is built by
 1.2 m beside it), so it also covers obstacles YOLO cannot name. `drop_distance_m` is where the walkable floor
 ends in the same regions (depth points below the deck, projected back to deck level); the camera cannot see
 the floor closer than ~0.8 m. `objects` are YOLO segmentation detections with their depth-derived distance
-and bearing. The goal is given relative to the robot (from the simulator pose).
+and bearing. `goal` is the red cube found by colour in the RGB image, placed with depth; `{"visible": false}`
+when it is out of view, and the decision maker has to explore.
 
 | action | command vx (m/s) | command yaw rate (rad/s) | measured in MuJoCo |
 |---|---|---|---|
@@ -68,21 +69,25 @@ One omnidirectional policy (v357, trained on vx ∈ [-1, 1], yaw rate up to ±0.
 
 ## Scenarios
 
-`kangaroo_jev/scenarios.py`: start at the origin facing +x. Raised courses are deck tiles over a floor 1.5 m
-below, so walking off an edge is a fall that ends the episode. `person` obstacles are photo billboards YOLO
-recognises; `box` obstacles are plain grey blocks only depth can see.
+`kangaroo_jev/scenarios.py`. Every course has the same goal: find and reach a red cube. The decision makers get
+no map and no pose, only the camera-derived scene; the cube's position is used for scoring only. Raised courses
+are deck tiles over a floor 1.5 m below, so walking off an edge is a fall that ends the episode. Walls are
+1.6 m tall, above the camera, so nothing behind them is visible. `person` obstacles are photo billboards YOLO
+recognises; boxes and walls are plain grey and only depth sees them.
 
 | course | what makes it hard |
 |---|---|
-| `walkway_turn` | 1.4 m L-shaped walkway; the goal is up the left branch, straight on is a drop |
-| `narrow_bridge` | 1 m bridge offset to the left of the straight line to the goal |
-| `pit` | 2×2 m hole right on the straight line to the goal |
+| `walkway_turn` | 1.4 m L-shaped walkway; the cube is up the left branch, out of view; straight on is a drop |
+| `narrow_bridge` | 1 m bridge offset to the left of the straight line to the cube |
+| `pit` | 2×2 m hole right between the robot and the cube |
 | `crowded_walkway` | 2 m walkway with two people and a block on it |
-| `slalom` | flat reference: people and a block, no edges |
+| `wall_gap` | a wall hides the cube; the way through is a 1.2 m gap off to the left |
+| `corridor` | corridor turning right; the cube is round the corner |
 
-Metrics per episode: success (goal reached with no collision), collision (base footprint within 0.3 m of an
-obstacle), fall (over, or off an edge), time, path length, minimum clearance, decision latency (mean / p95), Jev confidence,
-tokens per decision, API errors, and agreement with the heuristic on the same scenes.
+Metrics per episode: success (within 0.9 m of the cube centre, no collision, no fall), progress (share of the
+start-to-cube distance covered at best), collision (base footprint within 0.3 m of an obstacle), fall (over, or
+off an edge), time, path length, decision latency (mean / p95), Jev confidence, tokens per decision, API
+errors, and agreement with the heuristic on the same scenes.
 
 ## Upstream setup and the changes it needed
 

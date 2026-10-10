@@ -24,7 +24,7 @@ class Decision:
 
 
 INSTRUCTIONS = {
-    "role": "You steer a walking two-legged robot through a room towards a goal.",
+    "role": "You steer a walking two-legged robot. Its goal is to find and reach a red cube.",
     "task": "Choose the robot's next motion. It is executed for about one second, then you choose again.",
     "how_to_read_the_scene": [
         "`free_distance_m.ahead` is the distance to the nearest obstacle in the strip the robot walks through "
@@ -35,13 +35,16 @@ INSTRUCTIONS = {
         "The camera cannot see the floor closer than about 0.8 m, so an edge that was seen does not go away "
         "just because it is no longer reported.",
         "`objects` are things the camera recognised, with distance and bearing (positive bearing = to the left).",
-        "`goal.bearing_deg` is the direction of the goal relative to where the robot faces (positive = left).",
+        "`goal` is the red cube as the camera sees it: distance and bearing relative to where the robot faces "
+        "(positive = left). When `goal.visible` is false the cube is out of view, maybe behind a wall, round a "
+        "corner or behind the robot: explore to find it, by turning on the spot or by walking where it is open "
+        "and safe. The red cube is not an obstacle; walking up to it is the point.",
         "`recent_actions` are the previous choices, most recent last.",
     ],
     "priorities": [
         "Never walk off an edge: falling is the worst outcome.",
         "Never walk into an obstacle or person: keep at least about 0.8 m of clearance.",
-        "Otherwise make progress towards the goal.",
+        "Otherwise make progress towards the red cube, or towards finding it.",
         "Avoid oscillating between left and right without making progress.",
     ],
 }
@@ -87,16 +90,25 @@ class HeuristicBrain:
     def __call__(self, scene) -> Decision:
         # An edge blocks a direction just like an obstacle does.
         free = {k: min(v, scene["drop_distance_m"][k]) for k, v in scene["free_distance_m"].items()}
-        bearing = scene["goal"]["bearing_deg"]
+        goal = scene["goal"]
         more_open = "left" if free["left"] >= free["right"] else "right"
         if free["ahead"] < 0.6 and max(free["left"], free["right"]) < 0.8:
             action = "backward"
+        elif goal["visible"]:
+            bearing = goal["bearing_deg"]
+            if abs(bearing) > 20 and free["left" if bearing > 0 else "right"] > 1.2:
+                action = "left" if bearing > 0 else "right"
+            else:
+                action = "forward" if free["ahead"] >= 1.2 else more_open
         elif free["ahead"] < 1.2:
             action = more_open
-        elif abs(bearing) > 20 and free["left" if bearing > 0 else "right"] > 1.2:
-            action = "left" if bearing > 0 else "right"
-        else:
-            action = "forward"
+        else:  # explore: scan on the spot, and after most of a turn walk on where it is open
+            turns = 0
+            for a in reversed(scene["recent_actions"]):
+                if a not in ("left", "right"):
+                    break
+                turns += 1
+            action = "forward" if turns >= 8 else "left"
         return Decision(action)
 
 

@@ -1,4 +1,5 @@
-"""RGB-D frame -> compact scene description. This dict is everything the decision makers see."""
+"""RGB-D frame -> compact scene description. This dict is everything the decision makers see:
+no map, no pose; the goal is a red cube they have to find with the camera."""
 
 import math
 
@@ -37,7 +38,9 @@ class Perception:
         height = CAMERA_HEIGHT - (depth * math.sin(TILT) + y_down * math.cos(TILT))
         left = -x_right
         valid = np.isfinite(depth) & (depth > 0.05)
-        obstacle = valid & (height > OBSTACLE_HEIGHT) & (forward < MAX_RANGE)
+        r, g, b = (rgb[..., i].astype(np.int32) for i in range(3))
+        cube = valid & (r > 110) & (r > 2.5 * g) & (r > 2.5 * b)  # the red goal cube
+        obstacle = valid & ~cube & (height > OBSTACLE_HEIGHT) & (forward < MAX_RANGE)
         # A ray that lands below the floor crossed the floor's level at h / (h - height) of the way:
         # the walkable surface ends no later than that point.
         to_floor = CAMERA_HEIGHT / (CAMERA_HEIGHT - np.minimum(height, 0.0))
@@ -69,4 +72,9 @@ class Perception:
                     "bearing_deg": round(bearing),
                     "side": side(bearing),
                 })
-        return {"free_distance_m": free, "drop_distance_m": drops, "objects": objects}
+        goal = {"visible": False}
+        if cube.sum() > 20:
+            distance = float(np.median(forward[cube]))
+            bearing = math.degrees(math.atan2(float(np.median(left[cube])), distance))
+            goal = {"visible": True, "distance_m": round(distance, 1), "bearing_deg": round(bearing)}
+        return {"goal": goal, "free_distance_m": free, "drop_distance_m": drops, "objects": objects}

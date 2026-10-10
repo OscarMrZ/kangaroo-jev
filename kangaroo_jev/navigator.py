@@ -22,7 +22,7 @@ from sensor_msgs.msg import Image
 from kangaroo_jev.brains import ACTIONS, BRAINS, HeuristicBrain
 from kangaroo_jev.scenarios import SCENARIOS, clearance
 
-GOAL_TOLERANCE = 0.5  # m
+GOAL_TOLERANCE = 0.9  # m from the cube centre: standing right in front of it
 FALL_HEIGHT = 0.5  # base_link z below this = fallen (below the deck = walked off an edge)
 ROBOT_RADIUS = 0.3  # base_link to the outside of the feet, roughly
 
@@ -86,21 +86,25 @@ def run_episode(node, perception, brain, timeout=90.0, period=1.0, log=None):
     reference, history, latencies, perception_s = HeuristicBrain(), [], [], []
     confidences, tokens, errors = [], 0, 0
     start, outcome = node.now(), "timeout"
+    start_distance = closest = goal_relative(node.pose, node.scenario.goal)["distance_m"]
     while node.now() - start < timeout:
         tick = node.now()
         x, y, z, _ = node.pose
-        goal = goal_relative(node.pose, node.scenario.goal)
+        goal = goal_relative(node.pose, node.scenario.goal)  # ground truth, for scoring only
+        closest = min(closest, goal["distance_m"])
         if goal["distance_m"] < GOAL_TOLERANCE:
             outcome = "reached"
             break
         if z < FALL_HEIGHT:
-            outcome = "fell off an edge" if z < 0 else "fell"
+            t_fall = node.now()  # let it land before telling a fall over from a fall off the deck
+            while node.now() - t_fall < 1.5:
+                time.sleep(0.05)
+            outcome = "fell off an edge" if node.pose[2] < 0 else "fell"
             break
         t0 = time.perf_counter()
         scene = perception.describe(node.rgb, node.depth)
         perception_s.append(time.perf_counter() - t0)
-        scene["goal"] = goal
-        scene["recent_actions"] = history[-5:]
+        scene["recent_actions"] = history[-8:]
         decision = brain(scene)
         node.action = decision.action
         history.append(decision.action)
@@ -127,7 +131,10 @@ def run_episode(node, perception, brain, timeout=90.0, period=1.0, log=None):
         "time_s": round(node.now() - start, 1),
         "path_m": round(node.path_length, 2),
         "min_clearance_m": round(clear, 2) if math.isfinite(clear) else None,
-        "final_goal_distance_m": goal_relative(node.pose, node.scenario.goal)["distance_m"],
+        "start_distance_m": start_distance,
+        "closest_distance_m": closest,
+        # share of the way from the start to the cube that was covered at best
+        "progress": round(max(0.0, min(1.0, (start_distance - closest) / (start_distance - GOAL_TOLERANCE))), 2),
         "decisions": len(history),
         "decision_latency_mean_s": round(float(np.mean(latencies)), 3) if latencies else None,
         "decision_latency_p95_s": round(float(np.percentile(latencies, 95)), 3) if latencies else None,
