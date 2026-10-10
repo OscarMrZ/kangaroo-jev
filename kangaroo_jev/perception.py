@@ -59,6 +59,10 @@ class Perception:
         from ultralytics import YOLO
 
         self.yolo = YOLO(model_path)
+        self.reset()
+
+    def reset(self):
+        """Forget everything remembered; call at the start of every episode."""
         self.memory = []  # (t, obstacle points, edge points), both in the odometry frame
         self.goal_seen = None  # (t, cube position in the odometry frame)
 
@@ -104,7 +108,7 @@ class Perception:
         ox, oy, yaw = odom
         rot = np.array([[math.cos(yaw), -math.sin(yaw)], [math.sin(yaw), math.cos(yaw)]])
         to_odom = lambda p: np.unique(np.round((p @ rot.T + (ox, oy)) / GRID), axis=0).reshape(-1, 2) * GRID
-        self.memory = [m for m in self.memory if t - m[0] < MEMORY_S]
+        self.memory = [m for m in self.memory if 0 <= t - m[0] < MEMORY_S]
         self.memory.append((t, to_odom(seen_obstacles), to_odom(seen_edges)))
         to_robot = lambda p: (p - (ox, oy)) @ rot
         obstacles = to_robot(np.concatenate([m[1] for m in self.memory]))

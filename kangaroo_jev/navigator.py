@@ -83,6 +83,7 @@ def goal_relative(pose, goal):
 def run_episode(node, perception, brain, timeout=90.0, period=1.0, log=None):
     """Drive until the goal is reached, the robot falls, or `timeout` sim seconds pass."""
     node.wait_until(lambda: node.rgb is not None and node.pose is not None, 60, "camera and pose")
+    perception.reset()
     reference, history, latencies, perception_s = HeuristicBrain(), [], [], []
     confidences, tokens, errors = [], 0, 0
     start, outcome = node.now(), "timeout"
