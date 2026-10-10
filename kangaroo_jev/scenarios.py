@@ -1,4 +1,4 @@
-"""Courses for the benchmark: find and reach the red cube. The robot starts at the origin facing +x,
+"""Courses for the benchmark: reach the red cube, which is in view from the start. The robot starts at the origin facing +x,
 on a surface at z = 0.
 
 Raised courses are built from deck tiles (top at z = 0) over a floor 1.5 m below: walking off a
@@ -28,6 +28,7 @@ class Scenario:
 
 
 CUBE = 0.2  # half size of the red goal cube (m)
+PEDESTAL = 0.9  # the cube stands on a grey pedestal this tall, so it stays in view over 1 m walls
 
 
 def person(x, y):
@@ -35,13 +36,13 @@ def person(x, y):
 
 
 def wall(x0, x1, y0, y1):
-    """A 1.6 m wall: taller than the camera, so nothing behind it is visible."""
-    return Obstacle("wall", (x0 + x1) / 2, (y0 + y1) / 2, sx=(x1 - x0) / 2, sy=(y1 - y0) / 2, sz=0.8)
+    """A 1 m wall: below the camera, so the cube stays visible over it, but the robot cannot pass."""
+    return Obstacle("wall", (x0 + x1) / 2, (y0 + y1) / 2, sx=(x1 - x0) / 2, sy=(y1 - y0) / 2, sz=0.5)
 
 
 SCENARIOS = {
-    # L-shaped walkway, 1.4 m wide: the cube is up the left branch, out of view at the start; straight on is a drop.
-    "walkway_turn": Scenario(goal=(2.8, 3.9), deck=[(-1.0, 3.5, -0.7, 0.7), (2.1, 3.5, 0.7, 4.6)]),
+    # L-shaped walkway, 1.4 m wide: the cube is in view up the left branch, but the straight line to it is a drop.
+    "walkway_turn": Scenario(goal=(4.8, 3.0), deck=[(-1.0, 5.5, -0.7, 0.7), (4.1, 5.5, 0.7, 4.0)]),
     # 1 m bridge, offset to the left of the straight line to the cube.
     "narrow_bridge": Scenario(goal=(6.0, 0.0), deck=[(-1.0, 1.5, -1.5, 1.5), (1.5, 4.0, 0.3, 1.3), (4.0, 7.0, -1.5, 1.5)]),
     # 2 x 2 m hole right between the robot and the cube.
@@ -50,11 +51,10 @@ SCENARIOS = {
     # 2 m walkway with two people and a block on it.
     "crowded_walkway": Scenario(goal=(6.5, 0.0), deck=[(-1.0, 7.2, -1.0, 1.0)],
                                 obstacles=[person(2.2, 0.4), Obstacle("box", 3.8, -0.55), person(5.3, 0.45)]),
-    # A wall hides the cube; the way through is a 1.2 m gap off to the left.
+    # A wall between the robot and the cube; the way through is a 1.2 m gap off to the left.
     "wall_gap": Scenario(goal=(5.0, 0.0), obstacles=[wall(2.4, 2.6, -3.0, 1.2), wall(2.4, 2.6, 2.4, 4.0)]),
-    # Corridor that turns right; the cube is round the corner.
-    "corridor": Scenario(goal=(3.0, -3.5), obstacles=[wall(-1.0, 4.2, 1.0, 1.2), wall(-1.0, 2.0, -1.2, -1.0),
-                                                       wall(4.0, 4.2, -5.0, 1.0), wall(1.8, 2.0, -5.0, -1.0)]),
+    # Two staggered walls: the robot has to weave right, then left.
+    "staggered_walls": Scenario(goal=(6.0, 0.0), obstacles=[wall(1.9, 2.1, -0.4, 3.0), wall(3.9, 4.1, -3.0, 0.4)]),
 }
 
 
@@ -82,7 +82,9 @@ def world_xml(scenario, person_texture):
         geoms.append(f'<geom name="obstacle_{i}" type="box" pos="{o.x} {o.y} {o.sz}" '
                      f'size="{o.sx} {o.sy} {o.sz}" material="{material}"/>')
     gx, gy = scenario.goal
-    geoms.append(f'<geom name="goal_cube" type="box" pos="{gx} {gy} {CUBE}" size="{CUBE} {CUBE} {CUBE}" rgba="0.85 0.08 0.06 1"/>')
+    geoms.append(f'<geom name="pedestal" type="box" pos="{gx} {gy} {PEDESTAL / 2}" size="0.15 0.15 {PEDESTAL / 2}" material="block"/>')
+    geoms.append(f'<geom name="goal_cube" type="box" pos="{gx} {gy} {PEDESTAL + CUBE}" size="{CUBE} {CUBE} {CUBE}" '
+                 f'rgba="0.85 0.08 0.06 1"/>')
     body = "\n    ".join(geoms)
     return f"""<mujoco model="jev_world">
   <statistic center="0 0 1" extent="1.8" meansize="0.04"/>

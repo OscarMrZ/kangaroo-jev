@@ -64,7 +64,7 @@ def run_in_fresh_sim(scenario, brain, perception, timeout, prefix):
 
 
 def summarize(rows, brains):
-    lines = ["| brain | success | collided | fell | mean time (s) | decision latency mean / p95 (s) | mean confidence |",
+    lines = ["| brain | success | collided | fell | mean time (s) | decision latency mean / p95 (s) | mean p(safe) of chosen |",
              "|---|---|---|---|---|---|---|"]
     for b in brains:
         rs = [r for r in rows if r["brain"] == b]
@@ -76,7 +76,7 @@ def summarize(rows, brains):
             f"| {b} | {sum(r['success'] for r in rs)}/{len(rs)} | {sum(r['collided'] for r in rs)} | "
             f"{sum(r['outcome'].startswith('fell') for r in rs)} | {fmt(mean('time_s'), 1)} | "
             f"{fmt(mean('decision_latency_mean_s'), 3)} / {fmt(mean('decision_latency_p95_s'), 3)} | "
-            f"{fmt(mean('confidence_mean'))} |")
+            f"{fmt(mean('chosen_p_safe_mean'))} |")
     lines += ["", "| scenario | brain | outcome | success | time (s) | min clearance (m) | decisions | agreement w/ heuristic |",
               "|---|---|---|---|---|---|---|---|"]
     for r in rows:

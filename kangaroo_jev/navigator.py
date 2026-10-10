@@ -102,7 +102,9 @@ def run_episode(node, perception, brain, timeout=90.0, period=1.0, log=None):
             outcome = "fell off an edge" if node.pose[2] < 0 else "fell"
             break
         t0 = time.perf_counter()
-        scene = perception.describe(node.rgb, node.depth)
+        # The simulator's base pose stands in for leg odometry: perception only uses it to keep recently seen
+        # edges and obstacles in place; the decision makers never see it.
+        scene = perception.describe(node.rgb, node.depth, (x, y, node.pose[3]), node.now())
         perception_s.append(time.perf_counter() - t0)
         scene["recent_actions"] = history[-8:]
         decision = brain(scene)
@@ -111,13 +113,13 @@ def run_episode(node, perception, brain, timeout=90.0, period=1.0, log=None):
         latencies.append(decision.latency_s)
         tokens += decision.input_tokens
         errors += decision.error is not None
-        if decision.confidence is not None:
-            confidences.append(decision.confidence)
+        if decision.answers:
+            confidences.append(decision.answers["safe"][decision.action])
         if log:
             log.write(json.dumps({
                 "t": round(tick - start, 2), "pose": [round(v, 3) for v in node.pose], "scene": scene,
                 "action": decision.action, "heuristic_action": reference(scene).action,
-                "probabilities": decision.probabilities, "confidence": decision.confidence,
+                "answers": decision.answers,
                 "latency_s": round(decision.latency_s, 3), "error": decision.error,
             }) + "\n")
         while node.now() - tick < period and node.pose[2] >= FALL_HEIGHT:
@@ -139,7 +141,7 @@ def run_episode(node, perception, brain, timeout=90.0, period=1.0, log=None):
         "decision_latency_mean_s": round(float(np.mean(latencies)), 3) if latencies else None,
         "decision_latency_p95_s": round(float(np.percentile(latencies, 95)), 3) if latencies else None,
         "perception_mean_s": round(float(np.mean(perception_s)), 3) if perception_s else None,
-        "confidence_mean": round(float(np.mean(confidences)), 3) if confidences else None,
+        "chosen_p_safe_mean": round(float(np.mean(confidences)), 3) if confidences else None,
         "input_tokens_per_decision": round(tokens / len(history)) if history else None,
         "api_errors": errors,
     }

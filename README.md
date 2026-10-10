@@ -4,15 +4,20 @@ How good is [TypeSafe Jev](https://docs.typesafe.ai) as the decision maker for r
 PAL Robotics' [Kangaroo](https://github.com/pal-robotics/kangaroo_robot) biped (4dof-arm configuration)?
 
 ```
-D435 RGB-D (head) ──► YOLO26n-seg + depth geometry ──► scene description (JSON) ──► Jev Choice
-     (MuJoCo)                                                                     forward / left / right / backward
-                                                                                          │ fixed velocities
-PAL 4dof RL locomotion policy (pal_policy_deployer v357) ◄──── /cmd_vel ◄───────────────────┘
+D435 RGB-D (head) ──► YOLO26n-seg + depth geometry + red cube ──► scene JSON: four options
+     (MuJoCo)                + 20 s memory of edges/obstacles          │
+                                                                       ▼
+            one Jev request: Noul "safe?" + Score "progress" per option (8 questions)
+                                                                       │
+            code: geometric veto ─► Jev veto (p(safe) < 0.3) ─► highest progress
+                                                                       │ fixed velocities
+PAL 4dof RL locomotion policy (pal_policy_deployer v357) ◄── /cmd_vel ◄┘
 ```
 
-Walking is not trained here: it is PAL's published 4dof locomotion policy. Jev only sees the structured
-scene description and picks one of four motions once per second. A hand-written rule over the same
-description runs as a baseline, and is also evaluated on every Jev step so the logs show where they disagree.
+Walking is not trained here: it is PAL's published 4dof locomotion policy. This is reactive, semantic
+navigation: the red goal cube is in view, there is no map or planner, and once per second the robot picks
+one of four motions from a structured scene description. A hand-written rule over the same description runs
+as a baseline, and is also evaluated on every Jev step so the logs show where they disagree.
 
 ## Run
 
@@ -24,40 +29,54 @@ export TYPESAFE_API_KEY=...            # https://console.typesafe.ai
 
 # Full benchmark: every scenario × {jev, heuristic}, each episode in a fresh simulation
 docker compose run --rm kangaroo python3 -m kangaroo_jev.bench
-docker compose run --rm kangaroo python3 -m kangaroo_jev.bench --brains heuristic --scenarios slalom
+docker compose run --rm kangaroo python3 -m kangaroo_jev.bench --brains heuristic --scenarios wall_gap
 ```
 
 Results land in `results/<timestamp>/`: `summary.md`, `episodes.csv`, and one `.jsonl` per episode with
-every scene description, decision, probability distribution, confidence and latency.
+every scene description, decision, raw Jev answers and latency. `docs/report.html` is the latest report.
 
 To watch the MuJoCo viewer (X11/XWayland), allow local clients and pass your display:
 
 ```bash
 xhost +local:
 VIEWER_DISPLAY=$DISPLAY docker compose run --rm kangaroo bash -c \
-  "ros2 launch sim/kangaroo_jev.launch.py scenario:=slalom & sleep 25; python3 -m kangaroo_jev.navigator --brain jev --scenario slalom"
+  "ros2 launch sim/kangaroo_jev.launch.py scenario:=wall_gap & sleep 25; python3 -m kangaroo_jev.navigator --brain jev --scenario wall_gap"
 ```
 
 ## What Jev gets
 
-One `Choice` question per step (`kangaroo_jev/brains.py`); the state is built by `kangaroo_jev/perception.py`:
+`kangaroo_jev/perception.py` builds the state; code does all the geometry:
 
 ```json
 {
-  "goal": {"visible": true, "distance_m": 6.3, "bearing_deg": 0},
-  "free_distance_m": {"left": 2.1, "ahead": 2.1, "right": 3.5},
-  "drop_distance_m": {"left": 0.8, "ahead": 4.0, "right": 0.8},
+  "goal": {"visible": true, "distance_m": 4.6, "bearing_deg": 33},
+  "options": {
+    "forward": {"path_clear_m": 4.0, "floor_ends_m": 4.0, "free_run_m": 4.0, "goal_bearing_after_deg": 33},
+    "left":    {"path_clear_m": 4.0, "floor_ends_m": 1.0, "free_run_m": 1.0, "goal_bearing_after_deg": 5},
+    "right":   {"path_clear_m": 4.0, "floor_ends_m": 1.0, "free_run_m": 1.0, "goal_bearing_after_deg": 61},
+    "backward": {"path_clear_m": 4.0, "floor_ends_m": 4.0, "free_run_m": 4.0}
+  },
   "objects": [{"label": "person", "confidence": 0.86, "distance_m": 2.1, "bearing_deg": 12, "side": "ahead"}],
-  "recent_actions": ["forward", "forward"]
+  "recent_actions": ["forward", "left"]
 }
 ```
 
-`free_distance_m` comes from the depth image (points above the floor, in the robot's walking strip and up to
-1.2 m beside it), so it also covers obstacles YOLO cannot name. `drop_distance_m` is where the walkable floor
-ends in the same regions (depth points below the deck, projected back to deck level); the camera cannot see
-the floor closer than ~0.8 m. `objects` are YOLO segmentation detections with their depth-derived distance
-and bearing. `goal` is the red cube found by colour in the RGB image, placed with depth; `{"visible": false}`
-when it is out of view, and the decision maker has to explore.
+Each option is measured along a robot-wide strip in the direction the robot would face after that motion
+(turns are ~28°): distance to the nearest obstacle, to where the floor ends (depth points below the deck,
+projected back to deck level), and the cube's bearing afterwards. Points seen in the last 20 s are kept in an
+odometry frame, so edges stay known inside the camera's ~0.8 m blind zone. The cube is found by colour and
+placed with depth; its pedestal is not an obstacle. YOLO detections below 0.5 confidence are dropped. A
+`legend` explaining the fields rides in the state, which Jev reads once for all questions.
+
+`kangaroo_jev/brains.py` uses TypeSafe patterns rather than one big question:
+
+- **Speculative fan-out**: one request with a `Noul` "is this motion safe?" and a 4-level `Score` "how much does
+  it help reach the cube?" for each of the four motions.
+- **Rules in code**: a motion is allowed only with enough measured room (`MARGIN`: 0.8 m forward, 0.5 m for turns;
+  backward only to undo a step forward, the camera cannot see behind). Jev can still veto an allowed motion
+  (p(safe) < 0.3) for reasons the numbers miss, such as people.
+- **Composite decision**: among the allowed motions, the highest progress score wins. Raw answers are logged, so
+  thresholds can be changed without re-running inference.
 
 | action | command vx (m/s) | command yaw rate (rad/s) | measured in MuJoCo |
 |---|---|---|---|
@@ -69,20 +88,20 @@ One omnidirectional policy (v357, trained on vx ∈ [-1, 1], yaw rate up to ±0.
 
 ## Scenarios
 
-`kangaroo_jev/scenarios.py`. Every course has the same goal: find and reach a red cube. The decision makers get
-no map and no pose, only the camera-derived scene; the cube's position is used for scoring only. Raised courses
-are deck tiles over a floor 1.5 m below, so walking off an edge is a fall that ends the episode. Walls are
-1.6 m tall, above the camera, so nothing behind them is visible. `person` obstacles are photo billboards YOLO
+`kangaroo_jev/scenarios.py`. Every course has the same goal: reach a red cube on a 0.9 m grey pedestal, in view
+from the start. The decision makers get no map and no pose, only the camera-derived scene; the cube's position is
+used for scoring only. Raised courses are deck tiles over a floor 1.5 m below, so walking off an edge is a fall that
+ends the episode. Walls are 1 m tall: the robot cannot pass them, but sees the cube over them. `person` obstacles are photo billboards YOLO
 recognises; boxes and walls are plain grey and only depth sees them.
 
 | course | what makes it hard |
 |---|---|
-| `walkway_turn` | 1.4 m L-shaped walkway; the cube is up the left branch, out of view; straight on is a drop |
+| `walkway_turn` | 1.4 m L-shaped walkway; the cube is up the left branch, the straight line to it is a drop |
 | `narrow_bridge` | 1 m bridge offset to the left of the straight line to the cube |
 | `pit` | 2×2 m hole right between the robot and the cube |
 | `crowded_walkway` | 2 m walkway with two people and a block on it |
-| `wall_gap` | a wall hides the cube; the way through is a 1.2 m gap off to the left |
-| `corridor` | corridor turning right; the cube is round the corner |
+| `wall_gap` | a 1 m wall between the robot and the cube; the way through is a 1.2 m gap off to the left |
+| `staggered_walls` | two staggered 1 m walls: weave right, then left |
 
 Metrics per episode: success (within 0.9 m of the cube centre, no collision, no fall), progress (share of the
 start-to-cube distance covered at best), collision (base footprint within 0.3 m of an obstacle), fall (over, or
