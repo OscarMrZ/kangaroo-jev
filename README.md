@@ -64,8 +64,10 @@ VIEWER_DISPLAY=$DISPLAY docker compose run --rm kangaroo bash -c \
 Each option is measured along a robot-wide strip in the direction the robot would face after that motion
 (turns are ~28°): distance to the nearest obstacle, to where the floor ends (depth points below the deck,
 projected back to deck level), and the cube's bearing afterwards. Points seen in the last 20 s are kept in an
-odometry frame, so edges stay known inside the camera's ~0.8 m blind zone. The cube is found by colour and
-placed with depth; its pedestal is not an obstacle. YOLO detections below 0.5 confidence are dropped. A
+odometry frame, so edges stay known inside the camera's ~0.8 m blind zone. The floor plane is fitted to the
+bottom of every frame, because a few degrees of torso pitch otherwise turn far floor into phantom obstacles or
+edges. The cube is found by colour and placed with depth; its pedestal is not an obstacle; when it leaves the
+view, its last position is carried along with the robot's motion (`goal.remembered`) for 20 s. YOLO detections below 0.5 confidence are dropped. A
 `legend` explaining the fields rides in the state, which Jev reads once for all questions.
 
 `kangaroo_jev/brains.py` uses TypeSafe patterns rather than one big question:
@@ -88,10 +90,10 @@ One omnidirectional policy (v357, trained on vx ∈ [-1, 1], yaw rate up to ±0.
 
 ## Scenarios
 
-`kangaroo_jev/scenarios.py`. Every course has the same goal: reach a red cube on a 0.9 m grey pedestal, in view
+`kangaroo_jev/scenarios.py`. Every course has the same goal: reach a red cube on a 0.5 m grey pedestal, in view
 from the start. The decision makers get no map and no pose, only the camera-derived scene; the cube's position is
 used for scoring only. Raised courses are deck tiles over a floor 1.5 m below, so walking off an edge is a fall that
-ends the episode. Walls are 1 m tall: the robot cannot pass them, but sees the cube over them. `person` obstacles are photo billboards YOLO
+ends the episode. Walls are 0.8 m tall: the robot cannot pass them, but sees the cube over them. `person` obstacles are photo billboards YOLO
 recognises; boxes and walls are plain grey and only depth sees them.
 
 | course | what makes it hard |
@@ -100,8 +102,8 @@ recognises; boxes and walls are plain grey and only depth sees them.
 | `narrow_bridge` | 1 m bridge offset to the left of the straight line to the cube |
 | `pit` | 2×2 m hole right between the robot and the cube |
 | `crowded_walkway` | 2 m walkway with two people and a block on it |
-| `wall_gap` | a 1 m wall between the robot and the cube; the way through is a 1.2 m gap off to the left |
-| `staggered_walls` | two staggered 1 m walls: weave right, then left |
+| `wall_gap` | a wall between the robot and the cube; the way through is a 1.2 m gap off to the left |
+| `staggered_walls` | two staggered walls: weave right, then left |
 
 Metrics per episode: success (within 0.9 m of the cube centre, no collision, no fall), progress (share of the
 start-to-cube distance covered at best), collision (base footprint within 0.3 m of an obstacle), fall (over, or

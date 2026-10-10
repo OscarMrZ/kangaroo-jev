@@ -45,7 +45,9 @@ MOTIONS = {
 
 SCENE_GUIDE = [
     "The robot is a walking two-legged robot; its goal is to reach the red cube (`goal`), which stands on a "
-    "grey pedestal. Bearings are in degrees relative to where the robot faces, positive = to the left.",
+    "grey pedestal. Bearings are in degrees relative to where the robot faces, positive = to the left. When "
+    "the cube is out of view, `goal.remembered` gives where it was last seen, carried along with the robot's "
+    "own motion.",
     "`options.<motion>` describes what that motion runs into, measured along a robot-wide strip in the "
     "direction the robot would face afterwards: `path_clear_m` is the distance to the nearest obstacle, "
     "`floor_ends_m` the distance to where the walkable floor ends (a platform edge, a bridge side or a hole; "
@@ -136,7 +138,7 @@ class HeuristicBrain:
 
     def __call__(self, scene) -> Decision:
         goal, safe = scene["goal"], geometrically_safe(scene)
-        if not goal["visible"]:
+        if "bearing_deg" not in goal:
             preferred = ["left", "forward", "right", "backward"]
         elif abs(goal["bearing_deg"]) <= 15:
             preferred = ["forward", "left" if goal["bearing_deg"] > 0 else "right", "right", "left", "backward"]

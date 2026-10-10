@@ -107,7 +107,7 @@ def main():
                 print(f"[bench] {scenario} / {name}" + (" (retry: fell before the first decision)" if attempt else ""),
                       flush=True)
                 result = run_in_fresh_sim(scenario, brain, perception, args.timeout, out / f"{scenario}_{name}")
-                if not (result["outcome"] == "fell" and result.get("decisions") == 0):
+                if not (result["outcome"].startswith("fell") and result.get("decisions") == 0):
                     break
             result["startup_retries"] = attempt
             rows.append({"scenario": scenario, "brain": name, **result})

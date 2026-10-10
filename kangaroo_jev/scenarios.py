@@ -28,7 +28,7 @@ class Scenario:
 
 
 CUBE = 0.2  # half size of the red goal cube (m)
-PEDESTAL = 0.9  # the cube stands on a grey pedestal this tall, so it stays in view over 1 m walls
+PEDESTAL = 0.5  # the cube stands on a grey pedestal; low enough to stay in the down-tilted camera's view
 
 
 def person(x, y):
@@ -36,8 +36,8 @@ def person(x, y):
 
 
 def wall(x0, x1, y0, y1):
-    """A 1 m wall: below the camera, so the cube stays visible over it, but the robot cannot pass."""
-    return Obstacle("wall", (x0 + x1) / 2, (y0 + y1) / 2, sx=(x1 - x0) / 2, sy=(y1 - y0) / 2, sz=0.5)
+    """A 0.8 m wall: below the camera, so the cube stays visible over it, but the robot cannot pass."""
+    return Obstacle("wall", (x0 + x1) / 2, (y0 + y1) / 2, sx=(x1 - x0) / 2, sy=(y1 - y0) / 2, sz=0.4)
 
 
 SCENARIOS = {
