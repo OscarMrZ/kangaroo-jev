@@ -33,6 +33,7 @@ class Navigator(Node):
         self.scenario = scenario
         self.rgb = self.depth = self.pose = None
         self.action = None  # None: stand still
+        self.action_until = 0.0
         self.min_clearance = math.inf
         self.path_length = 0.0
         self.create_subscription(Image, "/head_camera/color", self.on_rgb, 1)
@@ -58,7 +59,9 @@ class Navigator(Node):
 
     def publish_cmd(self):
         t = Twist()
-        if self.action is not None:
+        # A motion lasts one decision period at most (what the decision makers were told), then the robot
+        # stands until the next decision, however long perception and the decision take.
+        if self.action is not None and self.now() < self.action_until:
             t.linear.x, t.angular.z = ACTIONS[self.action]["vx"], ACTIONS[self.action]["wz"]
         self.cmd_pub.publish(t)
 
@@ -109,7 +112,7 @@ def run_episode(node, perception, brain, timeout=90.0, period=1.0, log=None):
         perception_s.append(time.perf_counter() - t0)
         scene["recent_actions"] = history[-8:]
         decision = brain(scene)
-        node.action = decision.action
+        node.action, node.action_until = decision.action, node.now() + period
         history.append(decision.action)
         latencies.append(decision.latency_s)
         tokens += decision.input_tokens

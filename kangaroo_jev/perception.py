@@ -56,8 +56,10 @@ def nearest_in_strip(points, heading):
 
 class Perception:
     def __init__(self, model_path):
+        import torch
         from ultralytics import YOLO
 
+        torch.set_num_threads(4)  # leave cores for the simulator
         self.yolo = YOLO(model_path)
         self.reset()
 
