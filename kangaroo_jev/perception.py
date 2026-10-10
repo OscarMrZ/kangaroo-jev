@@ -8,7 +8,9 @@ FOVY_DEG = 58.0  # head_camera, see sim_setup.py
 TILT = math.radians(30.0)  # pitch of the torso RGB-D bracket
 CAMERA_HEIGHT = 1.35  # m above the floor while walking
 OBSTACLE_HEIGHT = 0.2  # points higher than this above the floor are obstacles
+DROP_DEPTH = 0.3  # points lower than this below the floor are a drop (an edge or a hole)
 CORRIDOR = 0.35  # half-width of the strip the robot sweeps when walking straight (m)
+SIDE = 1.2  # left/right regions run from the strip out to this lateral distance (m)
 MAX_RANGE = 4.0  # m; also reported when a region is clear
 
 
@@ -36,12 +38,20 @@ class Perception:
         left = -x_right
         valid = np.isfinite(depth) & (depth > 0.05)
         obstacle = valid & (height > OBSTACLE_HEIGHT) & (forward < MAX_RANGE)
+        # A ray that lands below the floor crossed the floor's level at h / (h - height) of the way:
+        # the walkable surface ends no later than that point.
+        to_floor = CAMERA_HEIGHT / (CAMERA_HEIGHT - np.minimum(height, 0.0))
+        edge, edge_left = forward * to_floor, left * to_floor
+        drop = valid & (height < -DROP_DEPTH) & (edge < MAX_RANGE)
 
-        regions = {"left": left > CORRIDOR, "ahead": np.abs(left) <= CORRIDOR, "right": left < -CORRIDOR}
-        free = {}
-        for name, region in regions.items():
+        regions = lambda lat: {"left": (lat > CORRIDOR) & (lat <= SIDE), "ahead": np.abs(lat) <= CORRIDOR,
+                               "right": (lat < -CORRIDOR) & (lat >= -SIDE)}
+        free, drops = {}, {}
+        for (name, region), edge_region in zip(regions(left).items(), regions(edge_left).values()):
             d = forward[obstacle & region]
             free[name] = round(float(d.min()), 1) if d.size else MAX_RANGE
+            e = edge[drop & edge_region]
+            drops[name] = round(float(e.min()), 1) if e.size else MAX_RANGE
 
         objects = []
         result = self.yolo(rgb[..., ::-1], conf=self.confidence, retina_masks=True, verbose=False)[0]  # YOLO wants BGR
@@ -59,4 +69,4 @@ class Perception:
                     "bearing_deg": round(bearing),
                     "side": side(bearing),
                 })
-        return {"free_distance_m": free, "objects": objects}
+        return {"free_distance_m": free, "drop_distance_m": drops, "objects": objects}

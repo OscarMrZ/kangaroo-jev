@@ -74,7 +74,7 @@ def summarize(rows, brains):
         fmt = lambda v, p=2: "-" if v is None else f"{v:.{p}f}"
         lines.append(
             f"| {b} | {sum(r['success'] for r in rs)}/{len(rs)} | {sum(r['collided'] for r in rs)} | "
-            f"{sum(r['outcome'] == 'fell' for r in rs)} | {fmt(mean('time_s'), 1)} | "
+            f"{sum(r['outcome'].startswith('fell') for r in rs)} | {fmt(mean('time_s'), 1)} | "
             f"{fmt(mean('decision_latency_mean_s'), 3)} / {fmt(mean('decision_latency_p95_s'), 3)} | "
             f"{fmt(mean('confidence_mean'))} |")
     lines += ["", "| scenario | brain | outcome | success | time (s) | min clearance (m) | decisions | agreement w/ heuristic |",

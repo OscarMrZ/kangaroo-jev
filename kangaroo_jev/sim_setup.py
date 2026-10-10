@@ -95,8 +95,8 @@ def setup(kangaroo_mujoco_share: str, controller_config_share: str):
 
     texture = models / "worlds" / "person.png"
     make_person_texture(texture)
-    for name, obstacles in SCENARIOS.items():
-        (models / "worlds" / f"jev_{name}.xml").write_text(world_xml(obstacles, texture))
+    for name, scenario in SCENARIOS.items():
+        (models / "worlds" / f"jev_{name}.xml").write_text(world_xml(scenario, texture))
         (variant / f"scene_jev_{name}.xml").write_text(
             '<mujoco model="scene">\n'
             f'  <include file="../worlds/jev_{name}.xml"/>\n'

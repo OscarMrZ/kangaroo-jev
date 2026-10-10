@@ -44,16 +44,19 @@ One `Choice` question per step (`kangaroo_jev/brains.py`); the state is built by
 
 ```json
 {
-  "free_distance_m": {"left": 1.9, "ahead": 1.9, "right": 3.2},
-  "objects": [{"label": "person", "confidence": 0.9, "distance_m": 1.9, "bearing_deg": 14, "side": "ahead"}],
-  "goal": {"distance_m": 4.1, "bearing_deg": -3},
+  "free_distance_m": {"left": 2.1, "ahead": 2.1, "right": 3.5},
+  "drop_distance_m": {"left": 0.8, "ahead": 4.0, "right": 0.8},
+  "objects": [{"label": "person", "confidence": 0.86, "distance_m": 2.1, "bearing_deg": 12, "side": "ahead"}],
+  "goal": {"distance_m": 6.5, "bearing_deg": 0},
   "recent_actions": ["forward", "forward"]
 }
 ```
 
-`free_distance_m` comes from the depth image (points above the floor, in the robot's walking strip and
-beside it), so it also covers obstacles YOLO cannot name. `objects` are YOLO segmentation detections with
-their depth-derived distance and bearing. The goal is given relative to the robot (from the simulator pose).
+`free_distance_m` comes from the depth image (points above the floor, in the robot's walking strip and up to
+1.2 m beside it), so it also covers obstacles YOLO cannot name. `drop_distance_m` is where the walkable floor
+ends in the same regions (depth points below the deck, projected back to deck level); the camera cannot see
+the floor closer than ~0.8 m. `objects` are YOLO segmentation detections with their depth-derived distance
+and bearing. The goal is given relative to the robot (from the simulator pose).
 
 | action | command vx (m/s) | command yaw rate (rad/s) | measured in MuJoCo |
 |---|---|---|---|
@@ -65,12 +68,20 @@ One omnidirectional policy (v357, trained on vx ∈ [-1, 1], yaw rate up to ±0.
 
 ## Scenarios
 
-`kangaroo_jev/scenarios.py`: start at the origin facing +x, goal at (6, 0). `person` obstacles are photo
-billboards YOLO recognises; `box` obstacles are plain grey blocks only depth can see.
-`clear`, `person_ahead`, `box_ahead`, `slalom`, `dead_end` (U-shaped trap facing the robot).
+`kangaroo_jev/scenarios.py`: start at the origin facing +x. Raised courses are deck tiles over a floor 1.5 m
+below, so walking off an edge is a fall that ends the episode. `person` obstacles are photo billboards YOLO
+recognises; `box` obstacles are plain grey blocks only depth can see.
+
+| course | what makes it hard |
+|---|---|
+| `walkway_turn` | 1.4 m L-shaped walkway; the goal is up the left branch, straight on is a drop |
+| `narrow_bridge` | 1 m bridge offset to the left of the straight line to the goal |
+| `pit` | 2×2 m hole right on the straight line to the goal |
+| `crowded_walkway` | 2 m walkway with two people and a block on it |
+| `slalom` | flat reference: people and a block, no edges |
 
 Metrics per episode: success (goal reached with no collision), collision (base footprint within 0.3 m of an
-obstacle), fall, time, path length, minimum clearance, decision latency (mean / p95), Jev confidence,
+obstacle), fall (over, or off an edge), time, path length, minimum clearance, decision latency (mean / p95), Jev confidence,
 tokens per decision, API errors, and agreement with the heuristic on the same scenes.
 
 ## Upstream setup and the changes it needed

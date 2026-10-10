@@ -30,11 +30,16 @@ INSTRUCTIONS = {
         "`free_distance_m.ahead` is the distance to the nearest obstacle in the strip the robot walks through "
         "when going straight; `left` and `right` are the nearest obstacles beside that strip. 4.0 means nothing "
         "within sensing range. These come from a depth camera and include obstacles the camera cannot name.",
+        "`drop_distance_m` is, for the same three regions, the distance to where the walkable floor ends: the "
+        "edge of a platform, a bridge or a hole. Walking past it is a fall. 4.0 means no edge within range. "
+        "The camera cannot see the floor closer than about 0.8 m, so an edge that was seen does not go away "
+        "just because it is no longer reported.",
         "`objects` are things the camera recognised, with distance and bearing (positive bearing = to the left).",
         "`goal.bearing_deg` is the direction of the goal relative to where the robot faces (positive = left).",
         "`recent_actions` are the previous choices, most recent last.",
     ],
     "priorities": [
+        "Never walk off an edge: falling is the worst outcome.",
         "Never walk into an obstacle or person: keep at least about 0.8 m of clearance.",
         "Otherwise make progress towards the goal.",
         "Avoid oscillating between left and right without making progress.",
@@ -80,7 +85,9 @@ class HeuristicBrain:
     name = "heuristic"
 
     def __call__(self, scene) -> Decision:
-        free, bearing = scene["free_distance_m"], scene["goal"]["bearing_deg"]
+        # An edge blocks a direction just like an obstacle does.
+        free = {k: min(v, scene["drop_distance_m"][k]) for k, v in scene["free_distance_m"].items()}
+        bearing = scene["goal"]["bearing_deg"]
         more_open = "left" if free["left"] >= free["right"] else "right"
         if free["ahead"] < 0.6 and max(free["left"], free["right"]) < 0.8:
             action = "backward"
