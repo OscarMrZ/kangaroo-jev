@@ -3,13 +3,13 @@
 import time
 from dataclasses import dataclass, field
 
-# Fixed velocities. The forward policy (v639) was trained on vx in [0.2, 0.5] with yaw rate in
-# [-0.5, 0.5], so turning is done while walking slowly; backward uses the backward policy (v630).
+# Fixed velocity commands for the 4dof loco policy (v357, trained on vx in [-1, 1], yaw rate up to 0.7).
+# Measured in MuJoCo: ~0.35 m/s forward, ~0.2 m/s backward, ~28 deg/s turning in place.
 ACTIONS = {
-    "forward": {"policy": 0, "vx": 0.3, "wz": 0.0},
-    "left": {"policy": 0, "vx": 0.2, "wz": 0.5},
-    "right": {"policy": 0, "vx": 0.2, "wz": -0.5},
-    "backward": {"policy": 1, "vx": -0.25, "wz": 0.0},
+    "forward": {"vx": 0.5, "wz": 0.0},
+    "left": {"vx": 0.0, "wz": 0.7},
+    "right": {"vx": 0.0, "wz": -0.7},
+    "backward": {"vx": -0.3, "wz": 0.0},
 }
 
 
@@ -42,14 +42,14 @@ INSTRUCTIONS = {
 }
 
 CRITERIA = {
-    "forward": "Walk straight ahead at about 0.3 m/s. Suitable when the path ahead is free for well over a metre "
+    "forward": "Walk straight ahead at about 0.35 m/s. Suitable when the path ahead is free for well over a metre "
                "and the goal is roughly ahead.",
-    "left": "Walk slowly (0.2 m/s) while turning left at about 30 degrees per second. Suitable when the goal is "
-            "to the left, or when the way ahead is blocked and the left side is more open.",
-    "right": "Walk slowly (0.2 m/s) while turning right at about 30 degrees per second. Suitable when the goal is "
-             "to the right, or when the way ahead is blocked and the right side is more open.",
-    "backward": "Step backwards at about 0.25 m/s. Only suitable when something is closer than about 0.6 m ahead "
-                "and turning would still hit it, or the robot is boxed in.",
+    "left": "Turn left on the spot at about 30 degrees per second. Suitable when the goal is to the left, or when "
+            "the way ahead is blocked and the left side is more open.",
+    "right": "Turn right on the spot at about 30 degrees per second. Suitable when the goal is to the right, or "
+             "when the way ahead is blocked and the right side is more open.",
+    "backward": "Step backwards at about 0.2 m/s. Only suitable when something is closer than about 0.6 m ahead "
+                "and turning on the spot would still hit it, or the robot is boxed in.",
 }
 
 

@@ -39,6 +39,30 @@ def stop_sim(proc):
             continue
 
 
+def run_in_fresh_sim(scenario, brain, perception, timeout, prefix):
+    with open(f"{prefix}.launch.log", "w") as sim_log:
+        sim = start_sim(scenario, sim_log)
+        node = Navigator(SCENARIOS[scenario])
+        executor = spin_in_background(node)
+        try:
+            # The policy takes over ~8 s after launch; let it settle the robot before driving.
+            node.wait_until(lambda: node.pose is not None and node.rgb is not None, 120, "simulation")
+            node.wait_until(lambda: node.now() > 15.0, 120, "policy start")
+            with open(f"{prefix}.jsonl", "w") as log:
+                result = run_episode(node, perception, brain, timeout, log=log)
+            steps = [json.loads(line) for line in open(f"{prefix}.jsonl")]
+            agree = np.mean([s["action"] == s["heuristic_action"] for s in steps]) if steps else None
+            result["agreement_with_heuristic"] = None if agree is None else round(float(agree), 2)
+        except TimeoutError as e:
+            result = {"outcome": f"error: {e}", "success": False, "collided": False}
+        finally:
+            executor.shutdown()
+            node.destroy_node()
+            stop_sim(sim)
+            time.sleep(2)
+    return result
+
+
 def summarize(rows, brains):
     lines = ["| brain | success | collided | fell | mean time (s) | decision latency mean / p95 (s) | mean confidence |",
              "|---|---|---|---|---|---|---|"]
@@ -79,27 +103,13 @@ def main():
     rows = []
     for scenario in args.scenarios:
         for name, brain in brains.items():
-            print(f"[bench] {scenario} / {name}", flush=True)
-            with open(out / f"{scenario}_{name}.launch.log", "w") as sim_log:
-                sim = start_sim(scenario, sim_log)
-                node = Navigator(SCENARIOS[scenario])
-                executor = spin_in_background(node)
-                try:
-                    # The policy takes over ~8 s after launch; let it settle the robot before driving.
-                    node.wait_until(lambda: node.pose is not None and node.rgb is not None, 120, "simulation")
-                    node.wait_until(lambda: node.now() > 15.0, 120, "policy start")
-                    with open(out / f"{scenario}_{name}.jsonl", "w") as log:
-                        result = run_episode(node, perception, brain, args.timeout, log=log)
-                    steps = [json.loads(line) for line in open(out / f"{scenario}_{name}.jsonl")]
-                    agree = np.mean([s["action"] == s["heuristic_action"] for s in steps]) if steps else None
-                    result["agreement_with_heuristic"] = None if agree is None else round(float(agree), 2)
-                except TimeoutError as e:
-                    result = {"outcome": f"error: {e}", "success": False, "collided": False}
-                finally:
-                    executor.shutdown()
-                    node.destroy_node()
-                    stop_sim(sim)
-                    time.sleep(2)
+            for attempt in range(2):  # retry once if the robot falls during the policy handover, before driving
+                print(f"[bench] {scenario} / {name}" + (" (retry: fell before the first decision)" if attempt else ""),
+                      flush=True)
+                result = run_in_fresh_sim(scenario, brain, perception, args.timeout, out / f"{scenario}_{name}")
+                if not (result["outcome"] == "fell" and result.get("decisions") == 0):
+                    break
+            result["startup_retries"] = attempt
             rows.append({"scenario": scenario, "brain": name, **result})
             print(f"[bench]   {json.dumps(rows[-1])}", flush=True)
             with open(out / "episodes.csv", "w", newline="") as f:

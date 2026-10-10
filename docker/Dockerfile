@@ -1,10 +1,6 @@
 # Kangaroo (PAL Robotics) MuJoCo sim + RL locomotion policy + YOLO/Jev navigation agent.
 FROM ros:humble
 
-ARG KANGAROO_ROBOT_SHA=54d539f8e9f54e9abba54000caebc7b0aa24d8bc
-ARG KANGAROO_SIMULATION_SHA=3bc51f8782fad252a9e9e6212ec985c7c96fd574
-ARG PAL_POLICY_DEPLOYER_SHA=3198c2d2a1dba19caa27e73fb390ef95a2a08d87
-
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
       python3-pip git \
@@ -14,6 +10,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Upstream PAL sources, pinned.
+ARG KANGAROO_ROBOT_SHA=54d539f8e9f54e9abba54000caebc7b0aa24d8bc
+ARG KANGAROO_SIMULATION_SHA=3bc51f8782fad252a9e9e6212ec985c7c96fd574
+# eurobin/extras: adds the 4dof locomotion baselines (v352-v357)
+ARG PAL_POLICY_DEPLOYER_SHA=c1a78e8ec7d2eb799a2a284b7dc8ee9a1afefd04
 WORKDIR /ws/src
 RUN set -e; for spec in \
       kangaroo_robot:$KANGAROO_ROBOT_SHA \

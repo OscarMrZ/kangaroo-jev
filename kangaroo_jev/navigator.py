@@ -1,4 +1,4 @@
-"""Reactive navigation loop: head camera -> perception -> brain -> /cmd_vel (+ policy switch).
+"""Reactive navigation loop: head camera -> perception -> brain -> /cmd_vel.
 
 python3 -m kangaroo_jev.navigator --brain jev --scenario slalom   # with the sim already running
 """
@@ -14,8 +14,6 @@ import numpy as np
 import rclpy
 from geometry_msgs.msg import Twist
 from mujoco_ros2_control_msgs.msg import FreeJointStateArray
-from pal_policy_inferer.action import SwitchPolicy
-from rclpy.action import ActionClient
 from rclpy.executors import SingleThreadedExecutor
 from rclpy.node import Node
 from rclpy.parameter import Parameter
@@ -35,14 +33,12 @@ class Navigator(Node):
         self.obstacles = obstacles
         self.rgb = self.depth = self.pose = None
         self.action = None  # None: stand still
-        self.policy = 0
         self.min_clearance = math.inf
         self.path_length = 0.0
         self.create_subscription(Image, "/head_camera/color", self.on_rgb, 1)
         self.create_subscription(Image, "/head_camera/depth", self.on_depth, 1)
         self.create_subscription(FreeJointStateArray, "/base_state", self.on_pose, 1)
         self.cmd_pub = self.create_publisher(Twist, "/cmd_vel", 1)
-        self.switch = ActionClient(self, SwitchPolicy, "/pal_policy_deployer/switch_policy")
         self.create_timer(0.05, self.publish_cmd)
 
     def on_rgb(self, m):
@@ -66,12 +62,6 @@ class Navigator(Node):
             t.linear.x, t.angular.z = ACTIONS[self.action]["vx"], ACTIONS[self.action]["wz"]
         self.cmd_pub.publish(t)
 
-    def apply(self, action):
-        policy = ACTIONS[action]["policy"]
-        if policy != self.policy and self.switch.wait_for_server(timeout_sec=2.0):
-            self.switch.send_goal_async(SwitchPolicy.Goal(policy_index=policy))
-            self.policy = policy
-        self.action = action
 
     def now(self):
         return self.get_clock().now().nanoseconds * 1e-9
@@ -112,7 +102,7 @@ def run_episode(node, perception, brain, timeout=90.0, period=1.0, log=None):
         scene["goal"] = goal
         scene["recent_actions"] = history[-5:]
         decision = brain(scene)
-        node.apply(decision.action)
+        node.action = decision.action
         history.append(decision.action)
         latencies.append(decision.latency_s)
         tokens += decision.input_tokens

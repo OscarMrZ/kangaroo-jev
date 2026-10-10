@@ -1,6 +1,7 @@
 """Idempotently adapt the installed PAL packages for this benchmark.
 
-- mounts a MuJoCo camera on Kangaroo's torso RGB-D bracket (the URDF has the frame, the MJCF has no camera)
+- edits the 4dof MJCF in place: an idealized RealSense D435 (pinhole RGB-D, 87x58 deg, 424x240, depth
+  aligned to colour) on the torso camera's colour frame; the model has the camera frames but no camera
 - writes one MuJoCo world + scene per benchmark scenario
 - enables the mujoco_ros2_control camera and free-joint-state plugins
 - raises the joint-state / IMU broadcaster rates so the 50 Hz policy sees fresh observations
@@ -12,7 +13,7 @@ from pathlib import Path
 
 from kangaroo_jev.scenarios import SCENARIOS, world_xml
 
-VARIANT = "mjcf_data_floating_no-arm_no-end-effector_no-end-effector_fixed"
+VARIANT = "mjcf_data_floating_4dof_no-end-effector_no-end-effector_fixed"
 CAMERA_SITE = "torso_front_up_rgbd_camera_color_frame"
 CAMERA = "head_camera"
 MARKER = "# --- kangaroo_jev ---"
@@ -64,7 +65,7 @@ def add_camera(mjcf: Path):
         pos=site.get("pos"),
         quat=" ".join(f"{v:.6f}" for v in q),
         fovy="58",
-        resolution="320 240",
+        resolution="424 240",
     )
     tree.write(mjcf)
 
