@@ -1,3 +1,4 @@
 results/
 __pycache__/
 MUJOCO_LOG.TXT
+navigator_*.jsonl

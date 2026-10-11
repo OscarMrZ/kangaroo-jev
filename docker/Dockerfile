@@ -35,6 +35,7 @@ RUN . /opt/ros/humble/setup.sh \
 # Perception + Jev client. CPU torch keeps the image small and avoids host driver coupling.
 RUN pip3 install --no-cache-dir --index-url https://download.pytorch.org/whl/cpu torch torchvision \
     && pip3 install --no-cache-dir "numpy<2" ultralytics typesafe-sdk
+RUN pip3 install --no-cache-dir mujoco  # offline renders for docs/figures.py
 RUN mkdir -p /opt/models && cd /opt/models \
     && python3 -c "from ultralytics import YOLO; YOLO('yolo26n-seg.pt')"
 
