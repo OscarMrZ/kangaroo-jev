@@ -12,7 +12,7 @@ Exploratory report · October 2026 · benchmark run `20261010-221313`
   motions, one decision per second, and a red goal cube that is in view from the start. No map, no planner, no pose for the
   decision maker. A short hand-written rule over the same inputs is the baseline.
 - **Result.** In 12 episodes (6 courses × 2 decision makers) nobody fell and nobody reached the cube within 90 s.
-  Jev covered 46% of the start-to-cube distance on average, the baseline 33%; Jev was ahead on 4 of 6 courses.
+  Jev covered 47% of the start-to-cube distance on average, the baseline 33%; Jev was ahead on 4 of 6 courses.
 - **Lessons.**
   1. A single "pick the action" question let Jev walk off every raised edge. Splitting the judgment into a safety `Noul` and a
      progress `Score` per motion, with the safety margin enforced in code, removed the falls.
@@ -20,8 +20,6 @@ Exploratory report · October 2026 · benchmark run `20261010-221313`
      walls and edges. Perception and Jev's latency (0.24 s per decision) are not the bottleneck.
 
 ## Setup
-
-<img src="docs/img/robot.jpg" width="200" align="right" alt="Kangaroo, 4dof arms">
 
 | Part | Choice |
 | --- | --- |
@@ -68,9 +66,12 @@ afterwards, the distance to the nearest obstacle and to where the floor ends, an
 {
   "goal": {"visible": true, "distance_m": 4.6, "bearing_deg": 33},
   "options": {
-    "forward":  {"path_clear_m": 4.0, "floor_ends_m": 4.0, "free_run_m": 4.0, "goal_bearing_after_deg": 33},
-    "left":     {"path_clear_m": 4.0, "floor_ends_m": 1.0, "free_run_m": 1.0, "goal_bearing_after_deg": 5},
-    "right":    {"path_clear_m": 4.0, "floor_ends_m": 1.0, "free_run_m": 1.0, "goal_bearing_after_deg": 61},
+    "forward":  {"path_clear_m": 4.0, "floor_ends_m": 4.0, "free_run_m": 4.0,
+                 "goal_bearing_after_deg": 33},
+    "left":     {"path_clear_m": 4.0, "floor_ends_m": 1.0, "free_run_m": 1.0,
+                 "goal_bearing_after_deg": 5},
+    "right":    {"path_clear_m": 4.0, "floor_ends_m": 1.0, "free_run_m": 1.0,
+                 "goal_bearing_after_deg": 61},
     "backward": {"path_clear_m": 4.0, "floor_ends_m": 4.0, "free_run_m": 4.0}
   },
   "objects": [],
@@ -96,7 +97,7 @@ free run, else keep walking where it is open.
 | --- | --- | --- |
 | One `Choice` picks the motion; goal from the simulator pose | 5 flat courses | Jev reached 1 of 5, baseline 4 of 5. Jev kept walking with an obstacle 0.9 m ahead and walked away from a goal behind it. |
 | One `Choice`; goal found by the camera | 6 raised and wall courses | Jev walked off an edge on all 4 raised courses, confidence rising to 0.98 as the edge closed in. 0 of 6 reached. |
-| Fan-out of `Noul` + `Score` per motion, policy in code (this report) | 6 courses, goal in view | No falls. 0 of 6 reached; progress 46% vs 33%. |
+| Fan-out of `Noul` + `Score` per motion, policy in code (this report) | 6 courses, goal in view | No falls. 0 of 6 reached; progress 47% vs 33%. |
 
 ## Results
 
@@ -133,7 +134,8 @@ with no API errors in 349 requests.
 
 - **Dithering.** Turns are 62–92% of all decisions, with up to 27 left/right flips in an episode. Near a wall or an edge the
   veto blocks forward, each turn looks best on its own, and nothing records which side was already tried.
-  The wall gap shows it: both decision makers swing back and forth in front of the wall.
+  The wall gap shows it: Jev turns back and forth (10 flips) and keeps facing the wall; the baseline turns away and wanders
+  along it without finding the gap.
 
   ![Wall gap, camera along the way](docs/img/film_wall_gap.jpg)
 - **Narrow passages.** The bridge is offset from the robot's line, so getting onto it takes a sidestep: turn, walk, turn back.

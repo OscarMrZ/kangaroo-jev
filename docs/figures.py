@@ -26,9 +26,9 @@ OUT = Path(__file__).parent / "img"
 BLUE, GREY, INK, QUIET, RULE, RED = "#2f6fdf", "#8a9099", "#1d1f23", "#6b7078", "#e4e6ea", "#d0352b"
 BRAINS = {"jev": BLUE, "heuristic": GREY}
 try:
-    FONT = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 18)
+    FONT = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 34)
 except OSError:
-    FONT = ImageFont.load_default(size=18)
+    FONT = ImageFont.load_default(size=34)
 rows = {(r["scenario"], r["brain"]): r for r in csv.DictReader(open(RUN / "episodes.csv"))}
 courses = [c for c in SCENARIOS if (c, "jev") in rows]
 
@@ -79,7 +79,7 @@ def yolo_overlay(rgb):
     return r.plot()[..., ::-1]
 
 
-def labelled_grid(images, labels, cols, out, label_h=30):
+def labelled_grid(images, labels, cols, out, label_h=50):
     w, h = images[0].shape[1], images[0].shape[0]
     rows_n = math.ceil(len(images) / cols)
     sheet = Image.new("RGB", (cols * w + (cols - 1) * 6, rows_n * (h + label_h)), "white")
@@ -87,7 +87,7 @@ def labelled_grid(images, labels, cols, out, label_h=30):
     for i, (im, label) in enumerate(zip(images, labels)):
         x, y = (i % cols) * (w + 6), (i // cols) * (h + label_h)
         sheet.paste(Image.fromarray(im), (x, y))
-        draw.text((x + 4, y + h + 5), label, fill=INK, font=FONT)
+        draw.text((x + 6, y + h + 6), label, fill=INK, font=FONT)
     sheet.save(out, quality=82)
 
 
@@ -102,10 +102,6 @@ def photos():
     names = [c.replace("_", " ") for c in courses]
     labelled_grid(overviews, names, 3, OUT / "courses.jpg")
     labelled_grid(cameras, names, 3, OUT / "camera_start.jpg")
-    r = Renderer(courses[0])
-    r.place()
-    cam = r.overview([0, 0, 0.75], distance=2.8, azimuth=200, elevation=-10)
-    Image.fromarray(cam[:, 120:520]).save(OUT / "robot.jpg", quality=85)
 
 
 def film_strip(course):
@@ -119,13 +115,13 @@ def film_strip(course):
         for i in picks:
             x, y, z, yaw = log[i]["pose"]
             r.place(x, y, z, yaw)
-            frames.append(np.array(Image.fromarray(yolo_overlay(r.camera())).resize((320, 181))))
-            labels.append(f"{brain} · {log[i]['t']:.0f} s")
+            frames.append(np.array(Image.fromarray(yolo_overlay(r.camera())).resize((424, 240))))
+            labels.append(f"{'Jev' if brain == 'jev' else 'rule'} · {log[i]['t']:.0f} s")
         end = r.overview([x, y, 0.3], distance=5.5, azimuth=math.degrees(yaw) + 200, elevation=-35)
-        frames.append(np.array(Image.fromarray(end).resize((320, 181))))
-        labels.append(f"{brain} · end: {rows[(course, brain)]['outcome']}")
+        frames.append(np.array(Image.fromarray(end).resize((424, 240))))
+        labels.append(f"{'Jev' if brain == 'jev' else 'rule'} · end")
         strips += list(zip(frames, labels))
-    labelled_grid([f for f, _ in strips], [lab for _, lab in strips], 5, OUT / f"film_{course}.jpg", label_h=28)
+    labelled_grid([f for f, _ in strips], [lab for _, lab in strips], 5, OUT / f"film_{course}.jpg", label_h=46)
 
 
 # ---- charts (standalone SVG) -----------------------------------------------------------------------
