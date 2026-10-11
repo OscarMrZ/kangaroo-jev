@@ -1,9 +1,10 @@
 """Figures for REPORT.md from a benchmark results dir. Runs in the container:
 
-    docker compose run --rm kangaroo python3 docs/figures.py results/<run>
+    docker compose run --rm kangaroo python3 docs/figures.py results/<run> [course:seed ...]
 
-Writes docs/img/: course and camera photos (offline MuJoCo renders of the benchmark scenes, film strips
-re-rendered from the logged base poses with the joints at the start posture) and SVG charts.
+Writes docs/img/: course and camera photos (offline MuJoCo renders of the benchmark scenes at the nominal start; film
+strips of the given episodes re-rendered from their logged base poses, joints at the start posture) and SVG charts over
+all seeds.
 """
 
 import csv
@@ -29,13 +30,22 @@ try:
     FONT = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 34)
 except OSError:
     FONT = ImageFont.load_default(size=34)
-rows = {(r["scenario"], r["brain"]): r for r in csv.DictReader(open(RUN / "episodes.csv"))}
-courses = [c for c in SCENARIOS if (c, "jev") in rows]
+rows = [r for r in csv.DictReader(open(RUN / "episodes.csv")) if r.get("progress")]
+courses = [c for c in SCENARIOS if any(r["scenario"] == c for r in rows)]
+seeds = sorted({int(r["seed"]) for r in rows})
 
 
-def steps(course, brain):
-    f = RUN / f"{course}_{brain}.jsonl"
+def episodes(course, brain):
+    return [r for r in rows if r["scenario"] == course and r["brain"] == brain]
+
+
+def steps(course, brain, seed):
+    f = RUN / f"{course}_{brain}_s{seed}.jsonl"
     return [json.loads(line) for line in open(f)] if f.exists() else []
+
+
+def all_steps(course, brain):
+    return [s for seed in seeds for s in steps(course, brain, seed)]
 
 
 # ---- photos ----------------------------------------------------------------------------------------
@@ -104,22 +114,24 @@ def photos():
     labelled_grid(cameras, names, 3, OUT / "camera_start.jpg")
 
 
-def film_strip(course):
-    """What the head camera saw along each brain's path, plus where it ended."""
+def film_strip(course, seed):
+    """What the head camera saw along each brain's path, plus where it ended. Logged poses are in the course frame,
+    which is the world frame of the seed-0 scenes."""
     r = Renderer(course)
     strips = []
     for brain in BRAINS:
-        log = steps(course, brain)
+        log = steps(course, brain, seed)
+        outcome = next(e["outcome"] for e in episodes(course, brain) if int(e["seed"]) == seed)
         picks = sorted({0, len(log) // 3, 2 * len(log) // 3, len(log) - 1})
         frames, labels = [], []
         for i in picks:
             x, y, z, yaw = log[i]["pose"]
             r.place(x, y, z, yaw)
             frames.append(np.array(Image.fromarray(yolo_overlay(r.camera())).resize((424, 240))))
-            labels.append(f"{'Jev' if brain == 'jev' else 'rule'} · {log[i]['t']:.0f} s")
+            labels.append(f"{'Jev' if brain == 'jev' else 'rule'} · move {i + 1}")
         end = r.overview([x, y, 0.3], distance=5.5, azimuth=math.degrees(yaw) + 200, elevation=-35)
         frames.append(np.array(Image.fromarray(end).resize((424, 240))))
-        labels.append(f"{'Jev' if brain == 'jev' else 'rule'} · end")
+        labels.append(f"{'Jev' if brain == 'jev' else 'rule'} · {outcome}")
         strips += list(zip(frames, labels))
     labelled_grid([f for f, _ in strips], [lab for _, lab in strips], 5, OUT / f"film_{course}.jpg", label_h=46)
 
@@ -141,27 +153,32 @@ def num(v):
 
 
 def progress_chart():
-    width, left, bar, gap = 760, 150, 13, 14
-    height = 70 + len(courses) * (2 * bar + gap)
-    X = lambda p: left + p * (width - left - 170)
-    mean = {b: np.mean([num(rows[(c, b)]["progress"]) or 0 for c in courses]) for b in BRAINS}
-    body = [text(0, 18, "Progress towards the cube per course (90 s per episode)", 15, weight=600),
-            text(0, 38, f"Share of the start-to-cube distance covered at best. Mean: Jev {mean['jev']:.0%}, rule "
-                        f"{mean['heuristic']:.0%}.", 12, QUIET),
-            f"<rect x='{width - 110}' y='8' width='10' height='10' fill='{BLUE}'/>", text(width - 95, 17, "Jev", 11.5),
-            f"<rect x='{width - 60}' y='8' width='10' height='10' fill='{GREY}'/>", text(width - 45, 17, "rule", 11.5)]
+    width, left, bar, gap = 760, 150, 15, 16
+    height = 74 + len(courses) * (2 * bar + gap)
+    X = lambda p: left + p * (width - left - 190)
+    prog = {(c, b): [num(r["progress"]) for r in episodes(c, b)] for c in courses for b in BRAINS}
+    pooled = {b: [p for c in courses for p in prog[(c, b)]] for b in BRAINS}
+    body = [text(0, 18, f"Progress towards the cube ({len(seeds)} seeds per course, 90 moves per episode)", 15, weight=600),
+            text(0, 38, f"Share of the start-to-cube distance covered at best (100% = reached). Bar: mean; dots: seeds. Jev "
+                        f"{np.mean(pooled['jev']):.0%} ± {np.std(pooled['jev']):.0%}, rule "
+                        f"{np.mean(pooled['heuristic']):.0%} ± {np.std(pooled['heuristic']):.0%}.", 12, QUIET),
+            f"<rect x='{width - 110}' y='50' width='10' height='10' fill='{BLUE}'/>", text(width - 95, 59, "Jev", 11.5),
+            f"<rect x='{width - 60}' y='50' width='10' height='10' fill='{GREY}'/>", text(width - 45, 59, "rule", 11.5)]
     for k in (0, 0.5, 1):
-        body += [f"<line x1='{X(k)}' x2='{X(k)}' y1='50' y2='{height - 14}' stroke='{RULE}'/>",
+        body += [f"<line x1='{X(k)}' x2='{X(k)}' y1='56' y2='{height - 14}' stroke='{RULE}'/>",
                  text(X(k), height - 2, f"{k:.0%}", 10.5, QUIET, "middle")]
-    y = 58
+    y = 64
     for c in courses:
-        body.append(text(left - 10, y + bar + 4, c.replace("_", " "), 12, INK, "end"))
+        body.append(text(left - 10, y + bar + 5, c.replace("_", " "), 12, INK, "end"))
         for b, color in BRAINS.items():
-            r = rows[(c, b)]
-            p = num(r["progress"]) or 0
-            label = "reached" if r["outcome"] == "reached" else r["outcome"].replace("fell off an edge", "fell off")
-            body += [f"<rect x='{left}' y='{y}' width='{max(X(p) - left, 1):.1f}' height='{bar}' fill='{color}' rx='2'/>",
-                     text(X(p) + 6, y + bar - 2, f"{p:.0%} · {label}", 11, BLUE if b == "jev" else QUIET)]
+            ps = prog[(c, b)]
+            m = np.mean(ps)
+            body.append(f"<rect x='{left}' y='{y + 2}' width='{max(X(m) - left, 1):.1f}' height='{bar - 4}' fill='{color}' "
+                        f"fill-opacity='0.35' rx='2'/>")
+            body += [f"<circle cx='{X(p):.1f}' cy='{y + bar / 2:.1f}' r='3.6' fill='{color}'/>" for p in ps]
+            reached = sum(r["outcome"] == "reached" for r in episodes(c, b))
+            body.append(text(X(max(ps)) + 9, y + bar - 3, f"{m:.0%} · reached {reached}/{len(ps)}", 11,
+                             BLUE if b == "jev" else QUIET))
             y += bar
         y += gap
     svg("progress.svg", width, height, body)
@@ -170,24 +187,30 @@ def progress_chart():
 def distance_chart():
     cw, ch, cols = 250, 135, 3
     body = [text(0, 16, "Distance to the cube over time", 15, weight=600),
-            text(0, 34, "Blue Jev, grey rule; dashed red: reached (0.9 m).", 12, QUIET)]
+            text(0, 34, "One line per seed. Blue Jev, grey rule; dashed red: reached (0.9 m). Lines leaving the top "
+                        "walk away from it.", 12, QUIET)]
     for i, c in enumerate(courses):
         ox, oy = (i % cols) * (cw + 5), 48 + (i // cols) * (ch + 10)
         gx, gy = SCENARIOS[c].goal
-        series = {b: [(s["t"], math.hypot(gx - s["pose"][0], gy - s["pose"][1])) for s in steps(c, b)] for b in BRAINS}
+        series = {(b, seed): [(s["t"], math.hypot(gx - s["pose"][0], gy - s["pose"][1])) for s in steps(c, b, seed)]
+                  for b in BRAINS for seed in seeds}
         tmax = max([t for s in series.values() for t, _ in s] + [10])
-        dmax = max([d for s in series.values() for _, d in s] + [1])
+        dmax = math.ceil(max([s[0][1] for s in series.values() if s] + [1]) + 1)
         X = lambda t: ox + 30 + t / tmax * (cw - 40)
         Y = lambda d: oy + ch - 22 - d / dmax * (ch - 44)
         body += [text(ox, oy + 12, c.replace("_", " "), 12, weight=600),
                  f"<line x1='{X(0)}' x2='{X(tmax)}' y1='{Y(0.9):.1f}' y2='{Y(0.9):.1f}' stroke='{RED}' stroke-dasharray='3 3'/>",
                  f"<line x1='{X(0)}' x2='{X(tmax)}' y1='{Y(0)}' y2='{Y(0)}' stroke='{RULE}'/>",
                  text(X(0) - 4, Y(dmax) + 4, f"{dmax:.0f} m", 9.5, QUIET, "end"),
-                 text(X(tmax), Y(0) + 14, f"{tmax:.0f} s", 9.5, QUIET, "end")]
-        for b, color in BRAINS.items():
-            if series[b]:
-                pts = " ".join(f"{X(t):.1f},{Y(d):.1f}" for t, d in series[b])
-                body.append(f"<polyline points='{pts}' fill='none' stroke='{color}' stroke-width='2'/>")
+                 text(X(tmax), Y(0) + 14, f"{tmax:.0f} s", 9.5, QUIET, "end"),
+                 f"<clipPath id='dclip{i}'><rect x='{X(0) - 2}' y='{Y(dmax)}' width='{cw}' height='{Y(0) - Y(dmax) + 2}'/>"
+                 f"</clipPath><g clip-path='url(#dclip{i})'>"]
+        for (b, seed), line in sorted(series.items(), key=lambda kv: kv[0][0] == "jev"):
+            if line:
+                pts = " ".join(f"{X(t):.1f},{Y(d):.1f}" for t, d in line)
+                body.append(f"<polyline points='{pts}' fill='none' stroke='{BRAINS[b]}' stroke-width='1.4' "
+                            f"stroke-opacity='0.7'/>")
+        body.append("</g>")
     svg("distance.svg", cols * (cw + 5), 48 + math.ceil(len(courses) / cols) * (ch + 10), body)
 
 
@@ -196,19 +219,17 @@ def trajectories_chart():
     cells, heights = [], []
     for c in courses:
         sc = SCENARIOS[c]
-        trails = {b: [s["pose"] for s in steps(c, b)] for b in BRAINS}
+        trails = {(b, seed): [s["pose"] for s in steps(c, b, seed)] for b in BRAINS for seed in seeds}
         xs = [0.0, sc.goal[0]] + [v for t in (sc.deck or []) for v in t[:2]] + [o.x + k * o.sx for o in sc.obstacles for k in (-1, 1)]
         ys = [0.0, sc.goal[1]] + [v for t in (sc.deck or []) for v in t[2:]] + [o.y + k * o.sy for o in sc.obstacles for k in (-1, 1)]
-        xs += [p[0] for t in trails.values() for p in t]
-        ys += [p[1] for t in trails.values() for p in t]
-        x0, x1, y0, y1 = min(xs) - 0.4, max(xs) + 0.4, min(ys) - 0.4, max(ys) + 0.4
+        x0, x1, y0, y1 = min(xs) - 1.0, max(xs) + 1.0, min(ys) - 1.0, max(ys) + 1.0  # paths leaving it are clipped
         s = min(cw / (x1 - x0), 160 / (y1 - y0))
         cells.append((c, sc, trails, x0, y1, s))
         heights.append((y1 - y0) * s)
     row_h = [max(heights[i:i + cols]) + 24 for i in range(0, len(courses), cols)]
     body = [text(0, 16, "Paths (top view)", 15, weight=600),
             text(0, 34, "White deck over a 1.5 m drop (dark), grey walls and boxes, orange people, red cube; "
-                        "blue Jev, grey rule, black dot start.", 12, QUIET)]
+                        "one line per seed, blue Jev, grey rule, black dots starts.", 12, QUIET)]
     for i, (c, sc, trails, x0, y1, s) in enumerate(cells):
         ox, oy = (i % cols) * (cw + 8), 48 + sum(row_h[: i // cols])
         X = lambda x: ox + (x - x0) * s
@@ -227,19 +248,20 @@ def trajectories_chart():
         gx, gy = sc.goal
         body += [f"<circle cx='{X(gx):.1f}' cy='{Y(gy):.1f}' r='{0.9 * s:.1f}' fill='none' stroke='{RED}' stroke-dasharray='3 3'/>",
                  f"<rect x='{X(gx - 0.2):.1f}' y='{Y(gy + 0.2):.1f}' width='{0.4 * s:.1f}' height='{0.4 * s:.1f}' fill='{RED}'/>"]
-        for b in ("heuristic", "jev"):
-            if trails[b]:
-                pts = " ".join(f"{X(p[0]):.1f},{Y(p[1]):.1f}" for p in trails[b])
+        for (b, seed), trail in sorted(trails.items(), key=lambda kv: kv[0][0] == "jev"):
+            if trail:
+                pts = " ".join(f"{X(p[0]):.1f},{Y(p[1]):.1f}" for p in trail)
                 body.append(f"<polyline points='{pts}' fill='none' stroke='{'#7d838c' if b == 'heuristic' else BLUE}' "
-                            f"stroke-width='2' stroke-linejoin='round'/>")
-        body.append(f"<circle cx='{X(0):.1f}' cy='{Y(0):.1f}' r='3.5' fill='#222'/></g>")
+                            f"stroke-width='1.4' stroke-opacity='0.75' stroke-linejoin='round'/>")
+        body += [f"<circle cx='{X(t[0][0]):.1f}' cy='{Y(t[0][1]):.1f}' r='2.5' fill='#222'/>" for t in trails.values() if t]
+        body.append("</g>")
     svg("paths.svg", cols * (cw + 8), 48 + sum(row_h), body)
 
 
 def calibration_chart():
     pts = [(s["scene"]["options"][m]["free_run_m"], s["answers"]["safe"][m], m)
-           for c in courses for s in steps(c, "jev") if s.get("answers") for m in ("forward", "left", "right")]
-    walk = [(d, p) for d, p, m in pts if m == "forward"]
+           for c in courses for s in all_steps(c, "jev") if s.get("answers") for m in ("forward",)]
+    walk = [(d, p) for d, p, m in pts]
     tight = [p for d, p in walk if d <= MARGIN["forward"]]
     roomy = [p for d, p in walk if d > MARGIN["forward"]]
     width, height, left, base = 760, 290, 50, 240
@@ -248,7 +270,7 @@ def calibration_chart():
     body = [text(0, 18, f"Jev's p(safe) for walking forward: median {np.median(tight):.2f} without room, "
                         f"{np.median(roomy):.2f} with room", 15, weight=600),
             text(0, 38, f"{sum(p >= 0.5 for p in tight)} of {len(tight)} steps without room still called safe; "
-                        f"the geometric veto in code blocks them. {len(pts)} answers in total.", 12, QUIET),
+                        f"the geometric veto in code blocks them. One dot per decision.", 12, QUIET),
             f"<rect x='{X(0)}' y='60' width='{X(MARGIN['forward']) - X(0):.1f}' height='{base - 60}' fill='{RED}' fill-opacity='0.07'/>",
             text(X(MARGIN["forward"]) + 4, 72, f"forward needs {MARGIN['forward']} m", 10.5, "#b03028"),
             text(width - 20, base + 34, "measured free run of the motion (m)", 11, QUIET, "end"),
@@ -258,15 +280,13 @@ def calibration_chart():
                  text(left - 6, Y(k) + 4, f"{k:g}", 10.5, QUIET, "end")]
     for d in range(5):
         body.append(text(X(d), base + 16, f"{d} m", 10.5, QUIET, "middle"))
-    for d, p, m in pts:
-        body.append(f"<circle cx='{X(d):.1f}' cy='{Y(p):.1f}' r='3' fill='{BLUE}' fill-opacity='{0.55 if m == 'forward' else 0.2}'/>")
-    body += [f"<circle cx='{width - 200}' cy='{height - 6}' r='3.5' fill='{BLUE}' fill-opacity='0.55'/>", text(width - 192, height - 2, "forward", 11),
-             f"<circle cx='{width - 120}' cy='{height - 6}' r='3.5' fill='{BLUE}' fill-opacity='0.2'/>", text(width - 112, height - 2, "turns", 11)]
+    body.append(f"<g fill='{BLUE}' fill-opacity='0.3'>" +
+                "".join(f"<circle cx='{X(d):.0f}' cy='{Y(p):.0f}' r='3'/>" for d, p, _ in pts) + "</g>")
     svg("calibration.svg", width, height, body)
 
 
 def latency_chart():
-    lat = sorted(s["latency_s"] for c in courses for s in steps(c, "jev"))
+    lat = sorted(s["latency_s"] for c in courses for s in all_steps(c, "jev"))
     bins = [0.15 + 0.01 * i for i in range(21)]
     counts = [sum(lo <= v < lo + 0.01 for v in lat) for lo in bins] + [sum(v >= bins[-1] + 0.01 for v in lat)]
     width, height, left, base = 760, 190, 40, 150
@@ -291,8 +311,9 @@ if __name__ == "__main__":
     SCENES = scene_dir()
     YOLO = _YOLO(os.environ["YOLO_MODEL"])
     photos()
-    for course in sys.argv[2:] or ["pit", "wall_gap"]:
-        film_strip(course)
+    for spec in sys.argv[2:] or ["pit:3", "wall_gap:0"]:
+        course, seed = spec.split(":")
+        film_strip(course, int(seed))
     progress_chart(), distance_chart(), trajectories_chart(), calibration_chart(), latency_chart()
     owner = Path(__file__).stat()  # the container runs as root; hand the files to the repo's owner
     for p in [OUT, *OUT.iterdir()]:

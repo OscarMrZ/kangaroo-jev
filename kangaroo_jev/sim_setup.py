@@ -2,7 +2,7 @@
 
 - edits the 4dof MJCF in place: an idealized RealSense D435 (pinhole RGB-D, 87x58 deg, 424x240, depth
   aligned to colour) on the torso camera's colour frame; the model has the camera frames but no camera
-- writes one MuJoCo world + scene per benchmark scenario
+- writes one MuJoCo world + scene per benchmark scenario, with the start pose for a seed
 - enables the mujoco_ros2_control camera and free-joint-state plugins
 - raises the joint-state / IMU broadcaster rates so the 50 Hz policy sees fresh observations
 """
@@ -11,7 +11,7 @@ import re
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
-from kangaroo_jev.scenarios import SCENARIOS, world_xml
+from kangaroo_jev.scenarios import SCENARIOS, start_pose, world_xml
 
 VARIANT = "mjcf_data_floating_4dof_no-end-effector_no-end-effector_fixed"
 CAMERA_SITE = "torso_front_up_rgbd_camera_color_frame"
@@ -86,7 +86,7 @@ def make_person_texture(path: Path):
     Image.open(image).crop((x0, y0, x1, y1)).resize((512, 512)).rotate(270).save(path)
 
 
-def setup(kangaroo_mujoco_share: str, controller_config_share: str):
+def setup(kangaroo_mujoco_share: str, controller_config_share: str, seed: int = 0):
     share = Path(kangaroo_mujoco_share)
     models = share / "models"
     variant = models / VARIANT
@@ -96,7 +96,7 @@ def setup(kangaroo_mujoco_share: str, controller_config_share: str):
     texture = models / "worlds" / "person.png"
     make_person_texture(texture)
     for name, scenario in SCENARIOS.items():
-        (models / "worlds" / f"jev_{name}.xml").write_text(world_xml(scenario, texture))
+        (models / "worlds" / f"jev_{name}.xml").write_text(world_xml(scenario, texture, start_pose(seed)))
         (variant / f"scene_jev_{name}.xml").write_text(
             '<mujoco model="scene">\n'
             f'  <include file="../worlds/jev_{name}.xml"/>\n'

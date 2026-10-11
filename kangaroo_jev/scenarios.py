@@ -1,10 +1,12 @@
-"""Courses for the benchmark: reach the red cube, which is in view from the start. The robot starts at the origin facing +x,
-on a surface at z = 0.
+"""Courses for the benchmark: reach the red cube, which is in view from the start. The robot starts near the origin facing
++x, on a surface at z = 0; the seed jitters that start pose (seed 0 is exactly the origin).
 
 Raised courses are built from deck tiles (top at z = 0) over a floor 1.5 m below: walking off a
 tile is a fall, which ends the episode.
 """
 
+import math
+import random
 from dataclasses import dataclass, field
 
 DROP = 1.5  # m from the deck down to the floor below
@@ -58,6 +60,17 @@ SCENARIOS = {
 }
 
 
+START_JITTER = (0.1, 0.15, math.radians(6))  # x, y (m), heading (rad): small enough to keep the cube in view
+
+
+def start_pose(seed):
+    """The robot's start (x, y, heading) in the course frame for a seed; seed 0 is the nominal start."""
+    if seed == 0:
+        return (0.0, 0.0, 0.0)
+    rng = random.Random(seed)
+    return tuple(rng.uniform(-j, j) for j in START_JITTER)
+
+
 def clearance(x, y, obstacles):
     """Distance from (x, y) to the nearest obstacle footprint (negative inside)."""
     best = float("inf")
@@ -68,7 +81,9 @@ def clearance(x, y, obstacles):
     return best
 
 
-def world_xml(scenario, person_texture):
+def world_xml(scenario, person_texture, start=(0.0, 0.0, 0.0)):
+    """The robot always spawns at the world origin facing +x, so the course is placed around it such that the
+    robot stands at `start` in the course frame."""
     geoms = []
     if scenario.deck is None:
         geoms.append('<geom name="floor" type="plane" size="0 0 0.01" material="floor" conaffinity="0" contype="1"/>')
@@ -85,7 +100,10 @@ def world_xml(scenario, person_texture):
     geoms.append(f'<geom name="pedestal" type="box" pos="{gx} {gy} {PEDESTAL / 2}" size="0.15 0.15 {PEDESTAL / 2}" material="block"/>')
     geoms.append(f'<geom name="goal_cube" type="box" pos="{gx} {gy} {PEDESTAL + CUBE}" size="{CUBE} {CUBE} {CUBE}" '
                  f'rgba="0.85 0.08 0.06 1"/>')
-    body = "\n    ".join(geoms)
+    sx, sy, sh = start
+    c, s = math.cos(sh), math.sin(sh)
+    pos = (-(c * sx + s * sy), -(-s * sx + c * sy))  # world-from-course: rotate by -sh, then translate
+    body = "\n      ".join(geoms)
     return f"""<mujoco model="jev_world">
   <statistic center="0 0 1" extent="1.8" meansize="0.04"/>
   <visual>
@@ -104,7 +122,9 @@ def world_xml(scenario, person_texture):
   </asset>
   <worldbody>
     <light pos="0 0 6" dir="0 0 -1" diffuse=".6 .6 .6"/>
-    {body}
+    <body name="course" pos="{pos[0]:.4f} {pos[1]:.4f} 0" quat="{math.cos(sh / 2):.6f} 0 0 {-math.sin(sh / 2):.6f}">
+      {body}
+    </body>
   </worldbody>
 </mujoco>
 """

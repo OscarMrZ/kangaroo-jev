@@ -1,7 +1,7 @@
 """Closed-loop benchmark. Every (scenario, brain) episode runs in a fresh simulation.
 
-python3 -m kangaroo_jev.bench                      # all scenarios, jev + heuristic
-python3 -m kangaroo_jev.bench --brains heuristic --scenarios clear slalom
+python3 -m kangaroo_jev.bench                      # all scenarios, jev + heuristic, seeds 0-4
+python3 -m kangaroo_jev.bench --brains heuristic --scenarios pit --seeds 0
 """
 
 import argparse
@@ -24,8 +24,8 @@ from kangaroo_jev.scenarios import SCENARIOS
 LAUNCH = Path(__file__).resolve().parent.parent / "sim" / "kangaroo_jev.launch.py"
 
 
-def start_sim(scenario, log):
-    return subprocess.Popen(["ros2", "launch", str(LAUNCH), f"scenario:={scenario}"],
+def start_sim(scenario, seed, log):
+    return subprocess.Popen(["ros2", "launch", str(LAUNCH), f"scenario:={scenario}", f"seed:={seed}"],
                             stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
 
 
@@ -39,17 +39,17 @@ def stop_sim(proc):
             continue
 
 
-def run_in_fresh_sim(scenario, brain, perception, timeout, prefix):
+def run_in_fresh_sim(scenario, seed, brain, perception, decisions, prefix):
     with open(f"{prefix}.launch.log", "w") as sim_log:
-        sim = start_sim(scenario, sim_log)
-        node = Navigator(SCENARIOS[scenario])
+        sim = start_sim(scenario, seed, sim_log)
+        node = Navigator(SCENARIOS[scenario], seed)
         executor = spin_in_background(node)
         try:
             # The policy takes over ~8 s after launch; let it settle the robot before driving.
             node.wait_until(lambda: node.pose is not None and node.rgb is not None, 120, "simulation")
             node.wait_until(lambda: node.now() > 15.0, 120, "policy start")
             with open(f"{prefix}.jsonl", "w") as log:
-                result = run_episode(node, perception, brain, timeout, log=log)
+                result = run_episode(node, perception, brain, decisions, log=log)
             steps = [json.loads(line) for line in open(f"{prefix}.jsonl")]
             agree = np.mean([s["action"] == s["heuristic_action"] for s in steps]) if steps else None
             result["agreement_with_heuristic"] = None if agree is None else round(float(agree), 2)
@@ -64,24 +64,38 @@ def run_in_fresh_sim(scenario, brain, perception, timeout, prefix):
 
 
 def summarize(rows, brains):
-    lines = ["| brain | success | collided | fell | mean time (s) | decision latency mean / p95 (s) | mean p(safe) of chosen |",
-             "|---|---|---|---|---|---|---|"]
+    """Per course and decision maker over seeds, then Jev vs the baseline paired by (course, seed)."""
+    fmt = lambda vs, p=2: f"{np.mean(vs):.{p}f} ± {np.std(vs):.{p}f}" if vs else "-"
+    lines = ["| course | brain | episodes | reached | fell | collided | progress | turn share | reversals |",
+             "|---|---|---|---|---|---|---|---|---|"]
+    for scenario in dict.fromkeys(r["scenario"] for r in rows):
+        for b in brains:
+            rs = [r for r in rows if r["scenario"] == scenario and r["brain"] == b]
+            if rs:
+                lines.append(
+                    f"| {scenario} | {b} | {len(rs)} | {sum(r['outcome'] == 'reached' for r in rs)} | "
+                    f"{sum(r['outcome'].startswith('fell') for r in rs)} | {sum(r['collided'] for r in rs)} | "
+                    f"{fmt([r['progress'] for r in rs])} | {fmt([r['turn_share'] for r in rs])} | "
+                    f"{fmt([r['reversals'] for r in rs], 1)} |")
+    lines += ["", "| brain | episodes | reached | fell | collided | progress | decision latency mean / p95 (s) |",
+              "|---|---|---|---|---|---|---|"]
     for b in brains:
         rs = [r for r in rows if r["brain"] == b]
-        if not rs:
-            continue
-        mean = lambda k: np.mean([r[k] for r in rs if r[k] is not None]) if any(r[k] is not None for r in rs) else None
-        fmt = lambda v, p=2: "-" if v is None else f"{v:.{p}f}"
-        lines.append(
-            f"| {b} | {sum(r['success'] for r in rs)}/{len(rs)} | {sum(r['collided'] for r in rs)} | "
-            f"{sum(r['outcome'].startswith('fell') for r in rs)} | {fmt(mean('time_s'), 1)} | "
-            f"{fmt(mean('decision_latency_mean_s'), 3)} / {fmt(mean('decision_latency_p95_s'), 3)} | "
-            f"{fmt(mean('chosen_p_safe_mean'))} |")
-    lines += ["", "| scenario | brain | outcome | success | time (s) | min clearance (m) | decisions | agreement w/ heuristic |",
-              "|---|---|---|---|---|---|---|---|"]
-    for r in rows:
-        lines.append(f"| {r['scenario']} | {r['brain']} | {r['outcome']} | {r['success']} | {r['time_s']} | "
-                     f"{r['min_clearance_m']} | {r['decisions']} | {r['agreement_with_heuristic']} |")
+        if rs:
+            lat = lambda k: np.mean([r[k] for r in rs if r[k] is not None])
+            lines.append(f"| {b} | {len(rs)} | {sum(r['outcome'] == 'reached' for r in rs)} | "
+                         f"{sum(r['outcome'].startswith('fell') for r in rs)} | {sum(r['collided'] for r in rs)} | "
+                         f"{fmt([r['progress'] for r in rs])} | {lat('decision_latency_mean_s'):.3f} / "
+                         f"{lat('decision_latency_p95_s'):.3f} |")
+    by = {(r["scenario"], r["seed"], r["brain"]): r["progress"] for r in rows}
+    diffs = np.array([by[(c, s, "jev")] - by[(c, s, "heuristic")] for c, s, b in by
+                      if b == "jev" and (c, s, "heuristic") in by])
+    if len(diffs):
+        boot = np.random.default_rng(0).choice(diffs, (10000, len(diffs))).mean(axis=1)
+        lo, hi = np.percentile(boot, [2.5, 97.5])
+        lines += ["", f"Jev - heuristic progress, paired by (course, seed): {diffs.mean():+.2f} "
+                      f"(95% bootstrap CI {lo:+.2f} to {hi:+.2f}); Jev ahead in {(diffs > 0).sum()}, behind in "
+                      f"{(diffs < 0).sum()}, tied in {(diffs == 0).sum()} of {len(diffs)} pairs."]
     return "\n".join(lines) + "\n"
 
 
@@ -89,7 +103,8 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--brains", nargs="+", choices=BRAINS, default=list(BRAINS))
     ap.add_argument("--scenarios", nargs="+", choices=SCENARIOS, default=list(SCENARIOS))
-    ap.add_argument("--timeout", type=float, default=90.0, help="sim seconds per episode")
+    ap.add_argument("--seeds", nargs="+", type=int, default=[0, 1, 2, 3, 4], help="start pose jitter; 0 = nominal")
+    ap.add_argument("--decisions", type=int, default=90, help="move budget per episode (1 s of motion each)")
     ap.add_argument("--out", default="results")
     args = ap.parse_args()
 
@@ -101,21 +116,23 @@ def main():
     brains = {name: BRAINS[name]() for name in args.brains}
     rclpy.init()
     rows = []
-    for scenario in args.scenarios:
-        for name, brain in brains.items():
-            for attempt in range(2):  # retry once if the robot falls during the policy handover, before driving
-                print(f"[bench] {scenario} / {name}" + (" (retry: fell before the first decision)" if attempt else ""),
-                      flush=True)
-                result = run_in_fresh_sim(scenario, brain, perception, args.timeout, out / f"{scenario}_{name}")
-                if not (result["outcome"].startswith("fell") and result.get("decisions") == 0):
-                    break
-            result["startup_retries"] = attempt
-            rows.append({"scenario": scenario, "brain": name, **result})
-            print(f"[bench]   {json.dumps(rows[-1])}", flush=True)
-            with open(out / "episodes.csv", "w", newline="") as f:
-                w = csv.DictWriter(f, list(dict.fromkeys(k for r in rows for k in r)))
-                w.writeheader()
-                w.writerows(rows)
+    for seed in args.seeds:
+        for scenario in args.scenarios:
+            for name, brain in brains.items():
+                for attempt in range(2):  # retry once if the robot falls during the policy handover, before driving
+                    print(f"[bench] {scenario} / {name} / seed {seed}" +
+                          (" (retry: fell before the first decision)" if attempt else ""), flush=True)
+                    result = run_in_fresh_sim(scenario, seed, brain, perception, args.decisions,
+                                              out / f"{scenario}_{name}_s{seed}")
+                    if not (result["outcome"].startswith("fell") and result.get("decisions") == 0):
+                        break
+                result["startup_retries"] = attempt
+                rows.append({"scenario": scenario, "brain": name, "seed": seed, **result})
+                print(f"[bench]   {json.dumps(rows[-1])}", flush=True)
+                with open(out / "episodes.csv", "w", newline="") as f:
+                    w = csv.DictWriter(f, list(dict.fromkeys(k for r in rows for k in r)))
+                    w.writeheader()
+                    w.writerows(rows)
     (out / "summary.md").write_text(summarize([r for r in rows if "time_s" in r], args.brains))
     print((out / "summary.md").read_text())
     rclpy.shutdown()

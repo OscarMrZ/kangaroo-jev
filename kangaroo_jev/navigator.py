@@ -1,6 +1,6 @@
 """Reactive navigation loop: head camera -> perception -> brain -> /cmd_vel.
 
-python3 -m kangaroo_jev.navigator --brain jev --scenario slalom   # with the sim already running
+python3 -m kangaroo_jev.navigator --brain jev --scenario pit --seed 0   # with the sim already running
 """
 
 import argparse
@@ -20,7 +20,7 @@ from rclpy.parameter import Parameter
 from sensor_msgs.msg import Image
 
 from kangaroo_jev.brains import ACTIONS, BRAINS, HeuristicBrain
-from kangaroo_jev.scenarios import SCENARIOS, clearance
+from kangaroo_jev.scenarios import SCENARIOS, clearance, start_pose
 
 GOAL_TOLERANCE = 0.9  # m from the cube centre: standing right in front of it
 FALL_HEIGHT = 0.5  # base_link z below this = fallen (below the deck = walked off an edge)
@@ -28,9 +28,10 @@ ROBOT_RADIUS = 0.3  # base_link to the outside of the feet, roughly
 
 
 class Navigator(Node):
-    def __init__(self, scenario):
+    def __init__(self, scenario, seed=0):
         super().__init__("kangaroo_jev_navigator", parameter_overrides=[Parameter("use_sim_time", value=True)])
         self.scenario = scenario
+        self.start = start_pose(seed)
         self.rgb = self.depth = self.pose = None
         self.action = None  # None: stand still
         self.action_until = 0.0
@@ -52,10 +53,14 @@ class Navigator(Node):
         p = m.free_joints[0].pose.pose
         q = p.orientation
         yaw = math.atan2(2 * (q.w * q.z + q.x * q.y), 1 - 2 * (q.y * q.y + q.z * q.z))
+        # Course frame: the course was placed so that the world origin is the seed's start pose.
+        sx, sy, sh = self.start
+        c, s = math.cos(sh), math.sin(sh)
+        x, y = sx + c * p.position.x - s * p.position.y, sy + s * p.position.x + c * p.position.y
         if self.pose is not None and self.action is not None:
-            self.path_length += math.hypot(p.position.x - self.pose[0], p.position.y - self.pose[1])
-            self.min_clearance = min(self.min_clearance, clearance(p.position.x, p.position.y, self.scenario.obstacles))
-        self.pose = (p.position.x, p.position.y, p.position.z, yaw)
+            self.path_length += math.hypot(x - self.pose[0], y - self.pose[1])
+            self.min_clearance = min(self.min_clearance, clearance(x, y, self.scenario.obstacles))
+        self.pose = (x, y, p.position.z, math.remainder(yaw + sh, math.tau))
 
     def publish_cmd(self):
         t = Twist()
@@ -83,15 +88,16 @@ def goal_relative(pose, goal):
     return {"distance_m": round(math.hypot(goal[0] - x, goal[1] - y), 1), "bearing_deg": round((bearing + 180) % 360 - 180)}
 
 
-def run_episode(node, perception, brain, timeout=90.0, period=1.0, log=None):
-    """Drive until the goal is reached, the robot falls, or `timeout` sim seconds pass."""
+def run_episode(node, perception, brain, decisions=90, period=1.0, log=None):
+    """Drive until the goal is reached, the robot falls, or `decisions` motions are used up. The budget is in
+    decisions rather than seconds, so a slower decision maker (or a loaded machine) gets the same number of moves."""
     node.wait_until(lambda: node.rgb is not None and node.pose is not None, 60, "camera and pose")
     perception.reset()
     reference, history, latencies, perception_s = HeuristicBrain(), [], [], []
     confidences, tokens, errors = [], 0, 0
-    start, outcome = node.now(), "timeout"
+    start, outcome = node.now(), "out of moves"
     start_distance = closest = goal_relative(node.pose, node.scenario.goal)["distance_m"]
-    while node.now() - start < timeout:
+    while True:
         tick = node.now()
         x, y, z, _ = node.pose
         goal = goal_relative(node.pose, node.scenario.goal)  # ground truth, for scoring only
@@ -104,6 +110,8 @@ def run_episode(node, perception, brain, timeout=90.0, period=1.0, log=None):
             while node.now() - t_fall < 1.5:
                 time.sleep(0.05)
             outcome = "fell off an edge" if node.pose[2] < 0 else "fell"
+            break
+        if len(history) >= decisions:
             break
         t0 = time.perf_counter()
         # The simulator's base pose stands in for leg odometry: perception only uses it to keep recently seen
@@ -142,6 +150,9 @@ def run_episode(node, perception, brain, timeout=90.0, period=1.0, log=None):
         # share of the way from the start to the cube that was covered at best
         "progress": round(max(0.0, min(1.0, (start_distance - closest) / (start_distance - GOAL_TOLERANCE))), 2),
         "decisions": len(history),
+        "turn_share": round(sum(a in ("left", "right") for a in history) / len(history), 2) if history else None,
+        # left right after right or vice versa: the dithering of a reactive policy in a local minimum
+        "reversals": sum({a, b} == {"left", "right"} for a, b in zip(history, history[1:])),
         "decision_latency_mean_s": round(float(np.mean(latencies)), 3) if latencies else None,
         "decision_latency_p95_s": round(float(np.percentile(latencies, 95)), 3) if latencies else None,
         "perception_mean_s": round(float(np.mean(perception_s)), 3) if perception_s else None,
@@ -162,16 +173,17 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--brain", choices=BRAINS, default="jev")
     ap.add_argument("--scenario", choices=SCENARIOS, default="walkway_turn", help="the course the sim is running")
-    ap.add_argument("--timeout", type=float, default=90.0)
+    ap.add_argument("--seed", type=int, default=0, help="the seed the sim was launched with")
+    ap.add_argument("--decisions", type=int, default=90, help="move budget per episode (1 s of motion each)")
     args = ap.parse_args()
 
     from kangaroo_jev.perception import Perception
 
     rclpy.init()
-    node = Navigator(SCENARIOS[args.scenario])
+    node = Navigator(SCENARIOS[args.scenario], args.seed)
     executor = spin_in_background(node)
     with open(f"navigator_{args.brain}.jsonl", "w") as log:
-        result = run_episode(node, Perception(os.environ["YOLO_MODEL"]), BRAINS[args.brain](), args.timeout, log=log)
+        result = run_episode(node, Perception(os.environ["YOLO_MODEL"]), BRAINS[args.brain](), args.decisions, log=log)
     print(json.dumps(result, indent=2))
     time.sleep(0.2)
     executor.shutdown()

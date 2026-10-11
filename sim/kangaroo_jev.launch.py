@@ -1,6 +1,6 @@
 """Kangaroo (4dof arms) in MuJoCo + PAL RL locomotion policy, driven by /cmd_vel.
 
-ros2 launch sim/kangaroo_jev.launch.py scenario:=slalom
+ros2 launch sim/kangaroo_jev.launch.py scenario:=pit seed:=0
 """
 
 from ament_index_python.packages import get_package_share_directory as share
@@ -20,13 +20,15 @@ def include(pkg, launch_file, **args):
 def setup(context):
     from kangaroo_jev.sim_setup import setup
 
-    setup(share("kangaroo_mujoco"), share("kangaroo_controller_configuration"))
+    setup(share("kangaroo_mujoco"), share("kangaroo_controller_configuration"),
+          int(LaunchConfiguration("seed").perform(context)))
     return []
 
 
 def generate_launch_description():
     return LaunchDescription([
-        DeclareLaunchArgument("scenario", default_value="clear"),
+        DeclareLaunchArgument("scenario", default_value="pit"),
+        DeclareLaunchArgument("seed", default_value="0", description="start pose jitter; 0 = nominal"),
         DeclareLaunchArgument("policy", default_value="v357", description="pal_policy_deployer 4dof loco model"),
         OpaqueFunction(function=setup),
         # Humble's controller_manager listens on ~/robot_description; newer distros resolve it globally.
