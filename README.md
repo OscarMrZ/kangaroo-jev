@@ -25,16 +25,18 @@ The image pins and builds `pal-robotics/kangaroo_robot`, `kangaroo_simulation` a
 Run one course with the rule-based baseline.
 
 ```bash
-docker compose run --rm kangaroo bash -c \
-  "ros2 launch sim/kangaroo_jev.launch.py scenario:=pit & sleep 30; python3 -m kangaroo_jev.navigator --brain heuristic --scenario pit"
+docker compose run --rm kangaroo bash -c "
+  ros2 launch sim/kangaroo_jev.launch.py scenario:=pit &
+  sleep 30 && python3 -m kangaroo_jev.navigator --brain heuristic --scenario pit"
 ```
 
 Use Jev instead.
 
 ```bash
 export TYPESAFE_API_KEY=...   # https://console.typesafe.ai
-docker compose run --rm kangaroo bash -c \
-  "ros2 launch sim/kangaroo_jev.launch.py scenario:=pit & sleep 30; python3 -m kangaroo_jev.navigator --brain jev --scenario pit"
+docker compose run --rm kangaroo bash -c "
+  ros2 launch sim/kangaroo_jev.launch.py scenario:=pit &
+  sleep 30 && python3 -m kangaroo_jev.navigator --brain jev --scenario pit"
 ```
 
 Watch the MuJoCo viewer (X11 or XWayland): prefix either command with `xhost +local: && VIEWER_DISPLAY=$DISPLAY`.
@@ -47,7 +49,7 @@ Run every course with every decision maker, each episode in a fresh simulation (
 
 ```bash
 docker compose run --rm kangaroo python3 -m kangaroo_jev.bench
-docker compose run --rm kangaroo python3 -m kangaroo_jev.bench --brains heuristic --scenarios pit wall_gap
+docker compose run --rm kangaroo python3 -m kangaroo_jev.bench --brains heuristic --scenarios pit
 ```
 
 Results go to `results/<run>/`: `summary.md`, `episodes.csv`, and one `.jsonl` per episode with every scene, decision and raw Jev
