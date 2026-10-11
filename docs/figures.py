@@ -25,13 +25,16 @@ from kangaroo_jev.scenarios import SCENARIOS  # noqa: E402
 RUN = Path(sys.argv[1])
 OUT = Path(__file__).parent / "img"
 BLUE, GREY, INK, QUIET, RULE, RED = "#2f6fdf", "#8a9099", "#1d1f23", "#6b7078", "#e4e6ea", "#d0352b"
-BRAINS = {"jev": BLUE, "heuristic": GREY}
+ORANGE = "#e07b22"
+COLORS = {"jev": BLUE, "clm": ORANGE, "heuristic": GREY}
+NAMES = {"jev": "Jev", "clm": "CLM", "heuristic": "rule"}
 try:
     FONT = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 34)
 except OSError:
     FONT = ImageFont.load_default(size=34)
 rows = [r for r in csv.DictReader(open(RUN / "episodes.csv")) if r.get("progress")]
 courses = [c for c in SCENARIOS if any(r["scenario"] == c for r in rows)]
+BRAINS = {b: c for b, c in COLORS.items() if any(r["brain"] == b for r in rows)}  # in plotting order
 seeds = sorted({int(r["seed"]) for r in rows})
 
 
@@ -128,10 +131,10 @@ def film_strip(course, seed):
             x, y, z, yaw = log[i]["pose"]
             r.place(x, y, z, yaw)
             frames.append(np.array(Image.fromarray(yolo_overlay(r.camera())).resize((424, 240))))
-            labels.append(f"{'Jev' if brain == 'jev' else 'rule'} · move {i + 1}")
+            labels.append(f"{NAMES[brain]} · move {i + 1}")
         end = r.overview([x, y, 0.3], distance=5.5, azimuth=math.degrees(yaw) + 200, elevation=-35)
         frames.append(np.array(Image.fromarray(end).resize((424, 240))))
-        labels.append(f"{'Jev' if brain == 'jev' else 'rule'} · {outcome}")
+        labels.append(f"{NAMES[brain]} · {outcome}")
         strips += list(zip(frames, labels))
     labelled_grid([f for f, _ in strips], [lab for _, lab in strips], 5, OUT / f"film_{course}.jpg", label_h=46)
 
@@ -148,22 +151,27 @@ def svg(name, width, height, body):
                             f"fill='white'/>{''.join(body)}</svg>")
 
 
+def legend():
+    return ", ".join(f"{dict(zip(COLORS.values(), ('blue', 'orange', 'grey')))[c]} {NAMES[b]}" for b, c in BRAINS.items())
+
+
 def num(v):
     return None if v in (None, "", "None") else float(v)
 
 
 def progress_chart():
     width, left, bar, gap = 760, 150, 15, 16
-    height = 74 + len(courses) * (2 * bar + gap)
+    height = 74 + len(courses) * (len(BRAINS) * bar + gap)
     X = lambda p: left + p * (width - left - 190)
     prog = {(c, b): [num(r["progress"]) for r in episodes(c, b)] for c in courses for b in BRAINS}
     pooled = {b: [p for c in courses for p in prog[(c, b)]] for b in BRAINS}
     body = [text(0, 18, f"Progress towards the cube ({len(seeds)} seeds per course, 90 moves per episode)", 15, weight=600),
-            text(0, 38, f"Share of the start-to-cube distance covered at best (100% = reached). Bar: mean; dots: seeds. Jev "
-                        f"{np.mean(pooled['jev']):.0%} ± {np.std(pooled['jev']):.0%}, rule "
-                        f"{np.mean(pooled['heuristic']):.0%} ± {np.std(pooled['heuristic']):.0%}.", 12, QUIET),
-            f"<rect x='{width - 110}' y='50' width='10' height='10' fill='{BLUE}'/>", text(width - 95, 59, "Jev", 11.5),
-            f"<rect x='{width - 60}' y='50' width='10' height='10' fill='{GREY}'/>", text(width - 45, 59, "rule", 11.5)]
+            text(0, 38, f"Share of the start-to-cube distance covered at best (100% = reached); bar: mean, dots: seeds. Mean: " +
+                        ", ".join(f"{NAMES[b]} {np.mean(pooled[b]):.0%}" for b in BRAINS) + ".",
+                        12, QUIET)]
+    for k, (b, color) in enumerate(BRAINS.items()):
+        x = width - 60 * (len(BRAINS) - k) - 10
+        body += [f"<rect x='{x}' y='50' width='10' height='10' fill='{color}'/>", text(x + 15, 59, NAMES[b], 11.5)]
     for k in (0, 0.5, 1):
         body += [f"<line x1='{X(k)}' x2='{X(k)}' y1='56' y2='{height - 14}' stroke='{RULE}'/>",
                  text(X(k), height - 2, f"{k:.0%}", 10.5, QUIET, "middle")]
@@ -178,7 +186,7 @@ def progress_chart():
             body += [f"<circle cx='{X(p):.1f}' cy='{y + bar / 2:.1f}' r='3.6' fill='{color}'/>" for p in ps]
             reached = sum(r["outcome"] == "reached" for r in episodes(c, b))
             body.append(text(X(max(ps)) + 9, y + bar - 3, f"{m:.0%} · reached {reached}/{len(ps)}", 11,
-                             BLUE if b == "jev" else QUIET))
+                             QUIET if b == "heuristic" else color))
             y += bar
         y += gap
     svg("progress.svg", width, height, body)
@@ -187,7 +195,7 @@ def progress_chart():
 def distance_chart():
     cw, ch, cols = 250, 135, 3
     body = [text(0, 16, "Distance to the cube over time", 15, weight=600),
-            text(0, 34, "One line per seed. Blue Jev, grey rule; dashed red: reached (0.9 m). Lines leaving the top "
+            text(0, 34, f"One line per seed. {legend()}; dashed red: reached (0.9 m). Lines leaving the top "
                         "walk away from it.", 12, QUIET)]
     for i, c in enumerate(courses):
         ox, oy = (i % cols) * (cw + 5), 48 + (i // cols) * (ch + 10)
@@ -205,7 +213,7 @@ def distance_chart():
                  text(X(tmax), Y(0) + 14, f"{tmax:.0f} s", 9.5, QUIET, "end"),
                  f"<clipPath id='dclip{i}'><rect x='{X(0) - 2}' y='{Y(dmax)}' width='{cw}' height='{Y(0) - Y(dmax) + 2}'/>"
                  f"</clipPath><g clip-path='url(#dclip{i})'>"]
-        for (b, seed), line in sorted(series.items(), key=lambda kv: kv[0][0] == "jev"):
+        for (b, seed), line in sorted(series.items(), key=lambda kv: kv[0][0] != "heuristic"):
             if line:
                 pts = " ".join(f"{X(t):.1f},{Y(d):.1f}" for t, d in line)
                 body.append(f"<polyline points='{pts}' fill='none' stroke='{BRAINS[b]}' stroke-width='1.4' "
@@ -228,8 +236,8 @@ def trajectories_chart():
         heights.append((y1 - y0) * s)
     row_h = [max(heights[i:i + cols]) + 24 for i in range(0, len(courses), cols)]
     body = [text(0, 16, "Paths (top view)", 15, weight=600),
-            text(0, 34, "White deck over a 1.5 m drop (dark), grey walls and boxes, orange people, red cube; "
-                        "one line per seed, blue Jev, grey rule, black dots starts.", 12, QUIET)]
+            text(0, 34, "Deck white over a 1.5 m drop, walls grey, people purple, cube red; one line per seed: "
+                        f"{legend()}; dots: starts.", 12, QUIET)]
     for i, (c, sc, trails, x0, y1, s) in enumerate(cells):
         ox, oy = (i % cols) * (cw + 8), 48 + sum(row_h[: i // cols])
         X = lambda x: ox + (x - x0) * s
@@ -242,66 +250,85 @@ def trajectories_chart():
         for a, b, c0, d in sc.deck or []:
             body.append(f"<rect x='{X(a):.1f}' y='{Y(d):.1f}' width='{(b - a) * s:.1f}' height='{(d - c0) * s:.1f}' fill='#f2f2ef'/>")
         for o in sc.obstacles:
-            fill = {"person": "#d9a46a", "wall": "#6f757e"}.get(o.kind, "#9aa0a8")
+            fill = {"person": "#9a6fd0", "wall": "#6f757e"}.get(o.kind, "#9aa0a8")
             body.append(f"<rect x='{X(o.x - o.sx):.1f}' y='{Y(o.y + o.sy):.1f}' width='{max(2 * o.sx * s, 2.5):.1f}' "
                         f"height='{2 * o.sy * s:.1f}' fill='{fill}'/>")
         gx, gy = sc.goal
         body += [f"<circle cx='{X(gx):.1f}' cy='{Y(gy):.1f}' r='{0.9 * s:.1f}' fill='none' stroke='{RED}' stroke-dasharray='3 3'/>",
                  f"<rect x='{X(gx - 0.2):.1f}' y='{Y(gy + 0.2):.1f}' width='{0.4 * s:.1f}' height='{0.4 * s:.1f}' fill='{RED}'/>"]
-        for (b, seed), trail in sorted(trails.items(), key=lambda kv: kv[0][0] == "jev"):
+        for (b, seed), trail in sorted(trails.items(), key=lambda kv: kv[0][0] != "heuristic"):
             if trail:
                 pts = " ".join(f"{X(p[0]):.1f},{Y(p[1]):.1f}" for p in trail)
-                body.append(f"<polyline points='{pts}' fill='none' stroke='{'#7d838c' if b == 'heuristic' else BLUE}' "
+                body.append(f"<polyline points='{pts}' fill='none' stroke='{'#7d838c' if b == 'heuristic' else COLORS[b]}' "
                             f"stroke-width='1.4' stroke-opacity='0.75' stroke-linejoin='round'/>")
         body += [f"<circle cx='{X(t[0][0]):.1f}' cy='{Y(t[0][1]):.1f}' r='2.5' fill='#222'/>" for t in trails.values() if t]
         body.append("</g>")
     svg("paths.svg", cols * (cw + 8), 48 + sum(row_h), body)
 
 
+MODELS = [b for b in ("jev", "clm")]  # decision makers that answer the safety and progress questions
+
+
 def calibration_chart():
-    pts = [(s["scene"]["options"][m]["free_run_m"], s["answers"]["safe"][m], m)
-           for c in courses for s in all_steps(c, "jev") if s.get("answers") for m in ("forward",)]
-    walk = [(d, p) for d, p, m in pts]
-    tight = [p for d, p in walk if d <= MARGIN["forward"]]
-    roomy = [p for d, p in walk if d > MARGIN["forward"]]
-    width, height, left, base = 760, 290, 50, 240
+    """p(safe) for walking forward against the measured free run, one panel per model."""
+    width, left, panel = 760, 50, 240
+    models = [b for b in MODELS if b in BRAINS]
     X = lambda d: left + min(d, 4) / 4.0 * (width - left - 20)
-    Y = lambda p: base - p * (base - 60)
-    body = [text(0, 18, f"Jev's p(safe) for walking forward: median {np.median(tight):.2f} without room, "
-                        f"{np.median(roomy):.2f} with room", 15, weight=600),
-            text(0, 38, f"{sum(p >= 0.5 for p in tight)} of {len(tight)} steps without room still called safe; "
-                        f"the geometric veto in code blocks them. One dot per decision.", 12, QUIET),
-            f"<rect x='{X(0)}' y='60' width='{X(MARGIN['forward']) - X(0):.1f}' height='{base - 60}' fill='{RED}' fill-opacity='0.07'/>",
-            text(X(MARGIN["forward"]) + 4, 72, f"forward needs {MARGIN['forward']} m", 10.5, "#b03028"),
-            text(width - 20, base + 34, "measured free run of the motion (m)", 11, QUIET, "end"),
-            text(left - 6, 54, "p(safe)", 11, QUIET, "end")]
-    for k in (0, 0.5, 1):
-        body += [f"<line x1='{left}' x2='{width - 20}' y1='{Y(k)}' y2='{Y(k)}' stroke='{RULE}'/>",
-                 text(left - 6, Y(k) + 4, f"{k:g}", 10.5, QUIET, "end")]
-    for d in range(5):
-        body.append(text(X(d), base + 16, f"{d} m", 10.5, QUIET, "middle"))
-    body.append(f"<g fill='{BLUE}' fill-opacity='0.3'>" +
-                "".join(f"<circle cx='{X(d):.0f}' cy='{Y(p):.0f}' r='3'/>" for d, p, _ in pts) + "</g>")
+    body = []
+    for k, b in enumerate(models):
+        top = k * (panel + 20)
+        base = top + panel - 40
+        Y = lambda p: base - p * (base - top - 60)
+        pts = [(s["scene"]["options"]["forward"]["free_run_m"], s["answers"]["safe"]["forward"])
+               for c in courses for s in all_steps(c, b) if s.get("answers")]
+        tight = [p for d, p in pts if d <= MARGIN["forward"]]
+        roomy = [p for d, p in pts if d > MARGIN["forward"]]
+        body += [text(0, top + 18, f"{NAMES[b]}'s p(safe) for walking forward: median {np.median(tight):.2f} without "
+                                   f"room, {np.median(roomy):.2f} with room", 15, weight=600),
+                 text(0, top + 38, f"{sum(p >= 0.5 for p in tight)} of {len(tight)} decisions without room called "
+                                   f"safe. One dot per decision.", 12, QUIET),
+                 f"<rect x='{X(0)}' y='{top + 60}' width='{X(MARGIN['forward']) - X(0):.1f}' height='{base - top - 60}' "
+                 f"fill='{RED}' fill-opacity='0.07'/>",
+                 text(X(MARGIN["forward"]) - 4, base - 6, f"forward needs {MARGIN['forward']} m", 10.5, "#b03028", "end"),
+                 text(left - 6, top + 54, "p(safe)", 11, QUIET, "end")]
+        for v in (0, 0.5, 1):
+            body += [f"<line x1='{left}' x2='{width - 20}' y1='{Y(v)}' y2='{Y(v)}' stroke='{RULE}'/>",
+                     text(left - 6, Y(v) + 4, f"{v:g}", 10.5, QUIET, "end")]
+        for d in range(5):
+            body.append(text(X(d), base + 16, f"{d} m", 10.5, QUIET, "middle"))
+        body.append(f"<g fill='{COLORS[b]}' fill-opacity='0.3'>" +
+                    "".join(f"<circle cx='{X(d):.0f}' cy='{Y(p):.0f}' r='3'/>" for d, p in pts) + "</g>")
+    height = len(models) * (panel + 20) + 10
+    body.append(text(width - 20, height - 6, "measured free run of walking forward (m)", 11, QUIET, "end"))
     svg("calibration.svg", width, height, body)
 
 
 def latency_chart():
-    lat = sorted(s["latency_s"] for c in courses for s in all_steps(c, "jev"))
-    bins = [0.15 + 0.01 * i for i in range(21)]
-    counts = [sum(lo <= v < lo + 0.01 for v in lat) for lo in bins] + [sum(v >= bins[-1] + 0.01 for v in lat)]
-    width, height, left, base = 760, 190, 40, 150
-    bw = (width - left - 80) / len(counts)
-    body = [text(0, 18, f"Decision latency: {np.median(lat):.2f} s median, {np.percentile(lat, 95):.2f} s p95 "
-                        f"({len(lat)} requests, 8 questions each)", 15, weight=600),
-            text(0, 38, "The robot decides once per second; latency is not the bottleneck.", 12, QUIET),
-            text(width - 20, base + 34, "seconds per decision", 11, QUIET, "end")]
-    for i, n in enumerate(counts):
-        h = n / max(counts) * (base - 55)
-        body.append(f"<rect x='{left + i * bw:.1f}' y='{base - h:.1f}' width='{bw - 2:.1f}' height='{h:.1f}' fill='{BLUE}' fill-opacity='0.75'/>")
-        if i % 5 == 0 and i < len(bins):
-            body.append(text(left + i * bw, base + 16, f"{bins[i]:.2f}", 10.5, QUIET))
-    body.append(text(left + len(bins) * bw, base + 16, f"≥{bins[-1] + 0.01:.2f}", 10.5, QUIET))
-    svg("latency.svg", width, height, body)
+    """Seconds per decision on a log axis, one histogram per model."""
+    width, left, row = 760, 60, 70
+    models = [b for b in MODELS if b in BRAINS]
+    lo, hi = math.log10(0.1), math.log10(10)
+    X = lambda v: left + (math.log10(min(max(v, 0.1), 10)) - lo) / (hi - lo) * (width - left - 20)
+    edges = [10 ** (lo + i * (hi - lo) / 60) for i in range(61)]
+    body = [text(0, 18, "Decision latency (one request, 8 questions): " + ", ".join(
+                f"{NAMES[b]} {np.median([s['latency_s'] for c in courses for s in all_steps(c, b)]):.2f} s median"
+                for b in models), 15, weight=600),
+            text(0, 38, "The motion lasts 1 s; slower decisions make the robot wait, not move less (90 moves per "
+                        "episode).", 12, QUIET)]
+    for k, b in enumerate(models):
+        lat = [s["latency_s"] for c in courses for s in all_steps(c, b)]
+        counts = [sum(e0 <= v < e1 for v in lat) for e0, e1 in zip(edges, edges[1:])]
+        base = 60 + (k + 1) * row
+        body.append(text(left - 8, base - 4, NAMES[b], 12, INK, "end"))
+        for (e0, e1), n in zip(zip(edges, edges[1:]), counts):
+            h = n / max(counts) * (row - 12)
+            body.append(f"<rect x='{X(e0):.1f}' y='{base - h:.1f}' width='{X(e1) - X(e0) - 1:.1f}' height='{h:.1f}' "
+                        f"fill='{COLORS[b]}' fill-opacity='0.75'/>")
+        body.append(f"<line x1='{left}' x2='{width - 20}' y1='{base}' y2='{base}' stroke='{RULE}'/>")
+    base = 60 + len(models) * row
+    for v in (0.1, 0.3, 1, 3, 10):
+        body.append(text(X(v), base + 16, f"{v:g} s", 10.5, QUIET, "middle"))
+    svg("latency.svg", width, base + 30, body)
 
 
 if __name__ == "__main__":

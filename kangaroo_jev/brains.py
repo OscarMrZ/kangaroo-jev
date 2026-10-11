@@ -60,10 +60,8 @@ SCENE_GUIDE = [
 ]
 
 
-def safety_question(motion):
-    from typesafe_sdk import Noul
-
-    return Noul(
+def safety_question(motion, sdk):
+    return sdk.Noul(
         instructions=f"Is it safe for the robot to {MOTIONS[motion]}, as described by `options.{motion}`? "
                      "`legend` explains the scene fields.",
         criteria={
@@ -76,10 +74,8 @@ def safety_question(motion):
     )
 
 
-def progress_question(motion):
-    from typesafe_sdk import Score
-
-    return Score(
+def progress_question(motion, sdk):
+    return sdk.Score(
         instructions=f"How much would it help the robot reach the red cube to {MOTIONS[motion]} "
                      f"(`options.{motion}`)? Judge progress only, not safety. `legend` explains the scene fields.",
         criteria=[
@@ -95,40 +91,73 @@ def progress_question(motion):
     )
 
 
-class JevBrain:
+def questions(sdk):
+    """The 8 questions of one request. `sdk` is typesafe_sdk or clm: both have Noul and Score with the same fields."""
+    return {f"safe_{m}": safety_question(m, sdk) for m in ACTIONS} | {f"progress_{m}": progress_question(m, sdk)
+                                                                       for m in ACTIONS}
+
+
+class SystemOneBrain:
     """Speculative fan-out: a safety Noul and a progress Score for every motion, in one request.
 
-    Code allows only motions with enough measured room; Jev's safety answer can still veto one, and its
-    progress score picks among the rest."""
+    Code allows only motions with enough measured room; the model's safety answer can still veto one, and its
+    progress score picks among the rest. Subclasses only send the request."""
 
-    name = "jev"
-
-    def __init__(self, model="jev-latest"):
-        from typesafe_sdk import TypeSafeClient
-
-        self.client = TypeSafeClient()
-        self.model = model
-        self.questions = {f"safe_{m}": safety_question(m) for m in ACTIONS}
-        self.questions |= {f"progress_{m}": progress_question(m) for m in ACTIONS}
+    def ask(self, state):
+        """-> ({motion: p(safe)}, {motion: progress}, {motion: progress confidence}, input tokens)"""
+        raise NotImplementedError
 
     def __call__(self, scene) -> Decision:
         t0 = time.perf_counter()
         try:
-            # The legend rides in the state: Jev reads the state once for all eight questions.
-            r = self.client.system_one(state={"legend": SCENE_GUIDE, **scene}, questions=self.questions, model=self.model)
+            # The legend rides in the state: the model reads the state once for all eight questions.
+            safe, progress, confidence, tokens = self.ask({"legend": SCENE_GUIDE, **scene})
         except Exception as e:  # keep the last motion; counted in the benchmark
             last = scene["recent_actions"][-1] if scene["recent_actions"] else "left"
             return Decision(last, time.perf_counter() - t0, error=repr(e))
-        safe = {m: r.nouls[f"safe_{m}"].noul for m in ACTIONS}
-        progress = {m: r.scores[f"progress_{m}"].score for m in ACTIONS}
         allowed = [m for m in geometrically_safe(scene) if safe[m] >= SEMANTIC_VETO]
         if allowed:
             action = max(allowed, key=lambda m: (progress[m], safe[m]))
         else:  # nothing passes both checks: turn towards the side with the most measured room
             action = max(("left", "right"), key=lambda m: scene["options"][m]["free_run_m"])
-        answers = {"safe": safe, "progress": progress,
-                   "progress_confidence": {m: r.scores[f"progress_{m}"].confidence for m in ACTIONS}}
-        return Decision(action, time.perf_counter() - t0, answers, r.usage.input_tokens)
+        answers = {"safe": safe, "progress": progress, "progress_confidence": confidence}
+        return Decision(action, time.perf_counter() - t0, answers, tokens or 0)
+
+
+class JevBrain(SystemOneBrain):
+    """TypeSafe Jev over the TypeSafe API."""
+
+    name = "jev"
+
+    def __init__(self, model="jev-latest"):
+        import typesafe_sdk
+
+        self.client, self.model, self.questions = typesafe_sdk.TypeSafeClient(), model, questions(typesafe_sdk)
+
+    def ask(self, state):
+        r = self.client.system_one(state=state, questions=self.questions, model=self.model)
+        return ({m: r.nouls[f"safe_{m}"].noul for m in ACTIONS}, {m: r.scores[f"progress_{m}"].score for m in ACTIONS},
+                {m: r.scores[f"progress_{m}"].confidence for m in ACTIONS}, r.usage.input_tokens)
+
+
+class ClmBrain(SystemOneBrain):
+    """CLM-8B (Contrastive-LM) behind its TypeSafe-compatible API, served locally (`docker compose up clm`)."""
+
+    name = "clm"
+
+    def __init__(self, model="clm-latest"):
+        import clm
+
+        self.client, self.model, self.questions = clm.CLMClient(), model, questions(clm)
+        if not self.client.health():
+            raise RuntimeError(f"no CLM server at {self.client.base_url}: start it with `docker compose up -d clm`")
+
+    def ask(self, state):
+        r = self.client.system_one(state, self.questions, model=self.model)
+        a = r.answers
+        # input_tokens: encoder tokens actually computed (cache misses), not the size of the request
+        return ({m: a[f"safe_{m}"].noul for m in ACTIONS}, {m: a[f"progress_{m}"].score for m in ACTIONS},
+                {m: a[f"progress_{m}"].confidence for m in ACTIONS}, r.usage.input_tokens)
 
 
 class HeuristicBrain:
@@ -153,4 +182,4 @@ class HeuristicBrain:
         return Decision(action)
 
 
-BRAINS = {"jev": JevBrain, "heuristic": HeuristicBrain}
+BRAINS = {"jev": JevBrain, "clm": ClmBrain, "heuristic": HeuristicBrain}

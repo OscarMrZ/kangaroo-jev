@@ -36,6 +36,10 @@ RUN . /opt/ros/humble/setup.sh \
 RUN pip3 install --no-cache-dir --index-url https://download.pytorch.org/whl/cpu torch torchvision \
     && pip3 install --no-cache-dir "numpy<2" ultralytics typesafe-sdk
 RUN pip3 install --no-cache-dir mujoco  # offline renders for docs/figures.py
+# CLM client only (the server runs in the clm service); the package's own deps pull in vLLM.
+ARG CLM_SHA=d5f9ef0fd9bde185df0ceaad4f4ecc6cfe8c34f6
+RUN pip3 install --no-cache-dir -U "pip>=23" \
+    && pip3 install --no-cache-dir --no-deps https://github.com/Contrastive-LM/CLM/archive/${CLM_SHA}.tar.gz
 RUN mkdir -p /opt/models && cd /opt/models \
     && python3 -c "from ultralytics import YOLO; YOLO('yolo26n-seg.pt')"
 

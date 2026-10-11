@@ -1,11 +1,12 @@
 """Closed-loop benchmark. Every (scenario, brain) episode runs in a fresh simulation.
 
-python3 -m kangaroo_jev.bench                      # all scenarios, jev + heuristic, seeds 0-4
+python3 -m kangaroo_jev.bench                      # all scenarios, jev + clm + heuristic, seeds 0-4
 python3 -m kangaroo_jev.bench --brains heuristic --scenarios pit --seeds 0
 """
 
 import argparse
 import csv
+import itertools
 import json
 import os
 import signal
@@ -64,7 +65,7 @@ def run_in_fresh_sim(scenario, seed, brain, perception, decisions, prefix):
 
 
 def summarize(rows, brains):
-    """Per course and decision maker over seeds, then Jev vs the baseline paired by (course, seed)."""
+    """Per course and decision maker over seeds, then every pair of decision makers by (course, seed)."""
     fmt = lambda vs, p=2: f"{np.mean(vs):.{p}f} ± {np.std(vs):.{p}f}" if vs else "-"
     lines = ["| course | brain | episodes | reached | fell | collided | progress | turn share | reversals |",
              "|---|---|---|---|---|---|---|---|---|"]
@@ -88,14 +89,14 @@ def summarize(rows, brains):
                          f"{fmt([r['progress'] for r in rs])} | {lat('decision_latency_mean_s'):.3f} / "
                          f"{lat('decision_latency_p95_s'):.3f} |")
     by = {(r["scenario"], r["seed"], r["brain"]): r["progress"] for r in rows}
-    diffs = np.array([by[(c, s, "jev")] - by[(c, s, "heuristic")] for c, s, b in by
-                      if b == "jev" and (c, s, "heuristic") in by])
-    if len(diffs):
-        boot = np.random.default_rng(0).choice(diffs, (10000, len(diffs))).mean(axis=1)
-        lo, hi = np.percentile(boot, [2.5, 97.5])
-        lines += ["", f"Jev - heuristic progress, paired by (course, seed): {diffs.mean():+.2f} "
-                      f"(95% bootstrap CI {lo:+.2f} to {hi:+.2f}); Jev ahead in {(diffs > 0).sum()}, behind in "
-                      f"{(diffs < 0).sum()}, tied in {(diffs == 0).sum()} of {len(diffs)} pairs."]
+    for x, y in itertools.combinations(brains, 2):
+        diffs = np.array([by[(c, s, x)] - by[(c, s, y)] for c, s, b in by if b == x and (c, s, y) in by])
+        if len(diffs):
+            boot = np.random.default_rng(0).choice(diffs, (10000, len(diffs))).mean(axis=1)
+            lo, hi = np.percentile(boot, [2.5, 97.5])
+            lines += ["", f"{x} - {y} progress, paired by (course, seed): {diffs.mean():+.2f} "
+                          f"(95% bootstrap CI {lo:+.2f} to {hi:+.2f}); {x} ahead in {(diffs > 0).sum()}, behind in "
+                          f"{(diffs < 0).sum()}, tied in {(diffs == 0).sum()} of {len(diffs)} pairs."]
     return "\n".join(lines) + "\n"
 
 

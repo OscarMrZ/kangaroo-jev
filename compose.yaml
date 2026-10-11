@@ -13,3 +13,28 @@ services:
     volumes:
       - .:/kangaroo_jev
       - /tmp/.X11-unix:/tmp/.X11-unix
+
+  # CLM-8B on the GPU, for `--brain clm`: docker compose up -d clm
+  clm:
+    profiles: [clm]
+    build:
+      context: .
+      dockerfile: docker/clm/Dockerfile
+    image: kangaroo-jev-clm
+    network_mode: host
+    ipc: host
+    environment:
+      - HF_HOME=/hf
+      - CLM_CKPT_DIR=/hf/clm  # the CLM head (75 MB), downloaded on first start
+      - OFFLOAD_GB  # GB of Qwen3-8B weights kept in CPU memory; 16 GB cards need a few
+      - VLLM_ARGS   # extra vllm serve flags, e.g. --kv-cache-memory=1500000000
+      - CLM_ARGS    # extra clm-serve flags, e.g. --device cpu (the heads are small)
+    volumes:
+      - ${HOME}/.cache/huggingface:/hf
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
