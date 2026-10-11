@@ -42,7 +42,7 @@ docker compose run --rm kangaroo bash -c "
 ```
 
 Use CLM-8B: start its server on the GPU first (Qwen3-8B encoder + CLM head; set `OFFLOAD_GB=1.5` on 16 GB cards), then
-run with `--brain clm`.
+run with `--brain clm_native` (questions written for CLM) or `--brain clm` (Jev's questions, for comparison).
 
 ```bash
 docker compose --profile clm up -d clm
@@ -56,8 +56,8 @@ moves (`--decisions`).
 
 ## Benchmark
 
-Run every course with every decision maker (Jev, CLM, rule) and seeds 0–4, each episode in a fresh simulation (90
-episodes, ~4 h; the CLM server must be up).
+Run every course with every decision maker (Jev, CLM naive, CLM native, rule) and seeds 0–4, each episode in a fresh
+simulation (120 episodes, ~5 h; the CLM server must be up).
 
 ```bash
 docker compose run --rm kangaroo python3 -m kangaroo_jev.bench
@@ -79,7 +79,7 @@ docker compose run --rm kangaroo python3 docs/figures.py results/<run>
 | `kangaroo_jev/sim_setup.py` | D435 camera, course worlds and plugins, applied to the installed PAL packages |
 | `kangaroo_jev/scenarios.py` | courses |
 | `kangaroo_jev/perception.py` | RGB-D frame → scene description |
-| `kangaroo_jev/brains.py` | questions and policy, Jev and CLM clients, rule-based baseline |
+| `kangaroo_jev/brains.py` | Jev's questions, CLM-native questions, policy in code, rule-based baseline |
 | `docker/clm/` | CLM-8B server: vLLM Qwen3-8B encoder + `clm-serve` |
 | `kangaroo_jev/navigator.py` | perceive → decide → `/cmd_vel` loop, episode metrics |
 | `kangaroo_jev/bench.py` | benchmark runner |

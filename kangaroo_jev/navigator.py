@@ -127,7 +127,7 @@ def run_episode(node, perception, brain, decisions=90, period=1.0, log=None):
         latencies.append(decision.latency_s)
         tokens += decision.input_tokens
         errors += decision.error is not None
-        if decision.answers:
+        if "safe" in decision.answers:  # models that answer the safety questions (Jev's eight)
             confidences.append(decision.answers["safe"][decision.action])
         if log:
             log.write(json.dumps({

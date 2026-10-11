@@ -169,9 +169,7 @@ def progress_chart():
     prog = {(c, b): [num(r["progress"]) for r in episodes(c, b)] for c in courses for b in BRAINS}
     pooled = {b: [p for c in courses for p in prog[(c, b)]] for b in BRAINS}
     body = [text(0, 18, f"Progress towards the cube ({len(seeds)} seeds per course, 90 moves per episode)", 15, weight=600),
-            text(0, 38, f"Share of the start-to-cube distance covered at best (100% = reached); bar: mean, dots: seeds. Mean: " +
-                        ", ".join(f"{NAMES[b]} {np.mean(pooled[b]):.0%}" for b in BRAINS) + ".",
-                        12, QUIET)]
+            text(0, 38, "Share of the start-to-cube distance covered at best (100% = reached); bar: mean, dots: seeds.", 12, QUIET)]
     x = left
     for b, color in BRAINS.items():
         body += [f"<rect x='{x}' y='50' width='10' height='10' fill='{color}'/>", text(x + 15, 59, NAMES[b], 11.5)]
@@ -311,16 +309,17 @@ def latency_chart():
     """Seconds per decision on a log axis, one histogram per model."""
     width, left, row = 760, 120, 60
     models = [b for b in BRAINS if b != "heuristic"]
-    lo, hi = math.log10(0.1), math.log10(10)
-    X = lambda v: left + (math.log10(min(max(v, 0.1), 10)) - lo) / (hi - lo) * (width - left - 20)
-    edges = [10 ** (lo + i * (hi - lo) / 60) for i in range(61)]
-    body = [text(0, 18, "Decision latency per move: " + ", ".join(
-                f"{NAMES[b]} {np.median([s['latency_s'] for c in courses for s in all_steps(c, b)]):.2f} s median"
+    lo, hi = math.log10(0.001), math.log10(10)
+    X = lambda v: left + (math.log10(min(max(v, 0.001), 10)) - lo) / (hi - lo) * (width - left - 20)
+    edges = [10 ** (lo + i * (hi - lo) / 80) for i in range(81)]
+    secs = lambda v: f"{v * 1000:.0f} ms" if v < 0.1 else f"{v:.2f} s"
+    body = [text(0, 18, "Decision latency: " + ", ".join(
+                f"{NAMES[b]} {secs(np.median([s['latency_s'] for c in courses for s in all_steps(c, b) if s.get('answers')]))}"
                 for b in models), 15, weight=600),
-            text(0, 38, "The motion lasts 1 s; slower decisions make the robot wait, not move less (90 moves per "
-                        "episode).", 12, QUIET)]
+            text(0, 38, "Median of moves the model answered. CLM caches embeddings: a situation it has seen before costs "
+                        "a few ms.", 12, QUIET)]
     for k, b in enumerate(models):
-        lat = [s["latency_s"] for c in courses for s in all_steps(c, b)]
+        lat = [s["latency_s"] for c in courses for s in all_steps(c, b) if s.get("answers")]
         counts = [sum(e0 <= v < e1 for v in lat) for e0, e1 in zip(edges, edges[1:])]
         base = 60 + (k + 1) * row
         body.append(text(left - 8, base - 4, NAMES[b], 12, INK, "end"))
@@ -330,8 +329,8 @@ def latency_chart():
                         f"fill='{COLORS[b]}' fill-opacity='0.75'/>")
         body.append(f"<line x1='{left}' x2='{width - 20}' y1='{base}' y2='{base}' stroke='{RULE}'/>")
     base = 60 + len(models) * row
-    for v in (0.1, 0.3, 1, 3, 10):
-        body.append(text(X(v), base + 16, f"{v:g} s", 10.5, QUIET, "middle"))
+    for v in (0.001, 0.01, 0.1, 1, 10):
+        body.append(text(X(v), base + 16, secs(v) if v < 0.1 else f"{v:g} s", 10.5, QUIET, "middle"))
     svg("latency.svg", width, base + 30, body)
 
 
