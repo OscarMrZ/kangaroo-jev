@@ -25,9 +25,12 @@ from kangaroo_jev.scenarios import SCENARIOS  # noqa: E402
 RUN = Path(sys.argv[1])
 OUT = Path(__file__).parent / "img"
 BLUE, GREY, INK, QUIET, RULE, RED = "#2f6fdf", "#8a9099", "#1d1f23", "#6b7078", "#e4e6ea", "#d0352b"
-ORANGE = "#e07b22"
-COLORS = {"jev": BLUE, "clm": ORANGE, "heuristic": GREY}
-NAMES = {"jev": "Jev", "clm": "CLM", "heuristic": "rule"}
+ORANGE, GREEN, MAGENTA = "#e07b22", "#2a9d6f", "#c2408f"
+# Plotting order. "naive": Jev's eight questions; "native": the CLM-native Choice (kangaroo_jev/brains.py).
+COLORS = {"jev": BLUE, "clm": ORANGE, "clm_native": GREEN, "clm_image_native": MAGENTA, "heuristic": GREY}
+NAMES = {"jev": "Jev", "clm": "CLM naive", "clm_native": "CLM native", "clm_image_native": "CLM image native",
+         "heuristic": "rule"}
+COLOR_WORDS = {BLUE: "blue", ORANGE: "orange", GREEN: "green", MAGENTA: "magenta", GREY: "grey"}
 try:
     FONT = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 34)
 except OSError:
@@ -152,7 +155,7 @@ def svg(name, width, height, body):
 
 
 def legend():
-    return ", ".join(f"{dict(zip(COLORS.values(), ('blue', 'orange', 'grey')))[c]} {NAMES[b]}" for b, c in BRAINS.items())
+    return ", ".join(f"{COLOR_WORDS[c]} {NAMES[b]}" for b, c in BRAINS.items())
 
 
 def num(v):
@@ -169,9 +172,10 @@ def progress_chart():
             text(0, 38, f"Share of the start-to-cube distance covered at best (100% = reached); bar: mean, dots: seeds. Mean: " +
                         ", ".join(f"{NAMES[b]} {np.mean(pooled[b]):.0%}" for b in BRAINS) + ".",
                         12, QUIET)]
-    for k, (b, color) in enumerate(BRAINS.items()):
-        x = width - 60 * (len(BRAINS) - k) - 10
+    x = left
+    for b, color in BRAINS.items():
         body += [f"<rect x='{x}' y='50' width='10' height='10' fill='{color}'/>", text(x + 15, 59, NAMES[b], 11.5)]
+        x += 30 + 6.5 * len(NAMES[b])
     for k in (0, 0.5, 1):
         body += [f"<line x1='{X(k)}' x2='{X(k)}' y1='56' y2='{height - 14}' stroke='{RULE}'/>",
                  text(X(k), height - 2, f"{k:.0%}", 10.5, QUIET, "middle")]
@@ -236,7 +240,7 @@ def trajectories_chart():
         heights.append((y1 - y0) * s)
     row_h = [max(heights[i:i + cols]) + 24 for i in range(0, len(courses), cols)]
     body = [text(0, 16, "Paths (top view)", 15, weight=600),
-            text(0, 34, "Deck white over a 1.5 m drop, walls grey, people purple, cube red; one line per seed: "
+            text(0, 34, "Deck white over a 1.5 m drop, walls grey, people brown, cube red; one line per seed: "
                         f"{legend()}; dots: starts.", 12, QUIET)]
     for i, (c, sc, trails, x0, y1, s) in enumerate(cells):
         ox, oy = (i % cols) * (cw + 8), 48 + sum(row_h[: i // cols])
@@ -250,7 +254,7 @@ def trajectories_chart():
         for a, b, c0, d in sc.deck or []:
             body.append(f"<rect x='{X(a):.1f}' y='{Y(d):.1f}' width='{(b - a) * s:.1f}' height='{(d - c0) * s:.1f}' fill='#f2f2ef'/>")
         for o in sc.obstacles:
-            fill = {"person": "#9a6fd0", "wall": "#6f757e"}.get(o.kind, "#9aa0a8")
+            fill = {"person": "#a0663a", "wall": "#6f757e"}.get(o.kind, "#9aa0a8")
             body.append(f"<rect x='{X(o.x - o.sx):.1f}' y='{Y(o.y + o.sy):.1f}' width='{max(2 * o.sx * s, 2.5):.1f}' "
                         f"height='{2 * o.sy * s:.1f}' fill='{fill}'/>")
         gx, gy = sc.goal
@@ -266,7 +270,7 @@ def trajectories_chart():
     svg("paths.svg", cols * (cw + 8), 48 + sum(row_h), body)
 
 
-MODELS = [b for b in ("jev", "clm")]  # decision makers that answer the safety and progress questions
+MODELS = ["jev", "clm"]  # decision makers that answer the safety and progress questions (Jev's eight)
 
 
 def calibration_chart():
@@ -305,12 +309,12 @@ def calibration_chart():
 
 def latency_chart():
     """Seconds per decision on a log axis, one histogram per model."""
-    width, left, row = 760, 60, 70
-    models = [b for b in MODELS if b in BRAINS]
+    width, left, row = 760, 120, 60
+    models = [b for b in BRAINS if b != "heuristic"]
     lo, hi = math.log10(0.1), math.log10(10)
     X = lambda v: left + (math.log10(min(max(v, 0.1), 10)) - lo) / (hi - lo) * (width - left - 20)
     edges = [10 ** (lo + i * (hi - lo) / 60) for i in range(61)]
-    body = [text(0, 18, "Decision latency (one request, 8 questions): " + ", ".join(
+    body = [text(0, 18, "Decision latency per move: " + ", ".join(
                 f"{NAMES[b]} {np.median([s['latency_s'] for c in courses for s in all_steps(c, b)]):.2f} s median"
                 for b in models), 15, weight=600),
             text(0, 38, "The motion lasts 1 s; slower decisions make the robot wait, not move less (90 moves per "

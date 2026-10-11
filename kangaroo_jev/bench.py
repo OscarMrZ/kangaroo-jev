@@ -102,7 +102,7 @@ def summarize(rows, brains):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--brains", nargs="+", choices=BRAINS, default=list(BRAINS))
+    ap.add_argument("--brains", nargs="+", choices=BRAINS, default=["jev", "clm", "clm_native", "heuristic"])
     ap.add_argument("--scenarios", nargs="+", choices=SCENARIOS, default=list(SCENARIOS))
     ap.add_argument("--seeds", nargs="+", type=int, default=[0, 1, 2, 3, 4], help="start pose jitter; 0 = nominal")
     ap.add_argument("--decisions", type=int, default=90, help="move budget per episode (1 s of motion each)")

@@ -119,6 +119,8 @@ def run_episode(node, perception, brain, decisions=90, period=1.0, log=None):
         scene = perception.describe(node.rgb, node.depth, (x, y, node.pose[3]), node.now())
         perception_s.append(time.perf_counter() - t0)
         scene["recent_actions"] = history[-8:]
+        if hasattr(brain, "frame"):  # decision makers that look at the camera image themselves
+            brain.frame = node.rgb
         decision = brain(scene)
         node.action, node.action_until = decision.action, node.now() + period
         history.append(decision.action)

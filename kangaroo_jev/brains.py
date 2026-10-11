@@ -160,6 +160,123 @@ class ClmBrain(SystemOneBrain):
                 {m: a[f"progress_{m}"].confidence for m in ACTIONS}, r.usage.input_tokens)
 
 
+# ---- CLM-native questions -----------------------------------------------------------------------------------
+# A contrastive model embeds the state and each answer separately and compares them, so whatever tells the motions
+# apart has to be in the answer texts, and numbers have to become words. Safety stays in code: only allowed motions
+# are offered.
+
+MOVES = {"forward": "Walk forward", "left": "Turn left", "right": "Turn right", "backward": "Step back"}
+NATIVE_QUESTION = "Which move gets the robot closer to the red cube, or helps it find the cube if it is out of sight?"
+
+
+def where(bearing_deg):
+    a, side = abs(bearing_deg), "left" if bearing_deg > 0 else "right"
+    if a < 15:
+        return "straight ahead"
+    if a < 60:
+        return f"ahead to the {side}"
+    return f"off to the {side}" if a < 120 else "behind the robot"
+
+
+def room(option):
+    what = "the floor ends" if option["floor_ends_m"] <= option["path_clear_m"] else "something is in the way"
+    run = option["free_run_m"]
+    if run >= 4.0:
+        return "open floor as far as it can see"
+    if run >= 2.0:
+        return f"a long stretch of open floor before {what}"
+    return f"a short stretch of open floor before {what}" if run >= 0.8 else f"{what} right in front"
+
+
+def situation(scene):
+    """The scene in two or three plain sentences."""
+    g, words = scene["goal"], ["A walking robot is trying to reach a red cube."]
+    if g.get("visible"):
+        words.append(f"The cube is about {g['distance_m']:.0f} m away, {where(g['bearing_deg'])}.")
+    elif g.get("remembered"):
+        words.append(f"The cube is out of view; it was last seen about {g['distance_m']:.0f} m away, "
+                     f"{where(g['bearing_deg'])}.")
+    else:
+        words.append("The cube is out of sight and the robot does not know where it is.")
+    words += [f"A {o['label']} is about {o['distance_m']:.0f} m away, {where(o['bearing_deg'])}." for o in scene["objects"]]
+    if scene["recent_actions"]:
+        words.append(f"Its last moves were: {', '.join(scene['recent_actions'][-4:])}.")
+    return " ".join(words)
+
+
+def outcome(motion, scene):
+    """What a motion leads to, in words: the answer text CLM compares against the situation."""
+    if motion == "backward":
+        return "Step back: undo the last step forward."
+    o = scene["options"][motion]
+    cube = (f", and the cube would then be {where(o['goal_bearing_after_deg'])}" if "goal_bearing_after_deg" in o
+            else ", and the cube stays out of sight")
+    return f"{MOVES[motion]}: {room(o)}{cube}."
+
+
+def native_questions(scene, allowed, sdk, mode):
+    """'choice': one Choice among the allowed motions. 'noul': a Noul per motion, the outcome in the question."""
+    if mode == "choice":
+        return {"move": sdk.Choice(instructions=NATIVE_QUESTION, criteria={m: outcome(m, scene) for m in allowed})}
+    return {m: sdk.Noul(instructions=f"If the robot does this next: {outcome(m, scene)} Does this move get it closer "
+                                     "to the red cube, or help it find the cube?",
+                        criteria={"true": "Yes, this move helps the robot reach or find the red cube.",
+                                  "false": "No, this move does not help the robot reach the red cube."})
+            for m in allowed}
+
+
+class ClmNativeBrain:
+    """CLM-8B with CLM-native questions (see above); the motion with the highest probability among the allowed ones.
+    `image`: also send the camera frame (needs an image CLM server and clm.content, e.g. kangaroo-clm's)."""
+
+    name, mode, image = "clm_native", "choice", False
+
+    def __init__(self, model="clm-latest"):
+        import clm
+
+        self.sdk, self.client, self.model = clm, clm.CLMClient(), model
+        self.frame = None  # set by run_episode before every decision
+        if not self.client.health():
+            raise RuntimeError(f"no CLM server at {self.client.base_url}: start it with `docker compose up -d clm`")
+
+    def state(self, scene):
+        text = situation(scene)
+        if not self.image or self.frame is None:
+            return text
+        import io
+
+        from clm.content import image_part, with_images
+        from PIL import Image
+
+        buf = io.BytesIO()
+        Image.fromarray(self.frame).save(buf, format="JPEG", quality=92)
+        return with_images(text, [image_part(buf.getvalue(), mime="image/jpeg")])
+
+    def __call__(self, scene) -> Decision:
+        t0 = time.perf_counter()
+        allowed = geometrically_safe(scene)
+        if not allowed:  # as for Jev: turn towards the side with the most measured room
+            return Decision(max(("left", "right"), key=lambda m: scene["options"][m]["free_run_m"]), 0.0)
+        try:
+            r = self.client.system_one(self.state(scene), native_questions(scene, allowed, self.sdk, self.mode),
+                                       model=self.model)
+        except Exception as e:  # keep the last motion; counted in the benchmark
+            last = scene["recent_actions"][-1] if scene["recent_actions"] else "left"
+            return Decision(last, time.perf_counter() - t0, error=repr(e))
+        p = (r.answers["move"].probabilities if self.mode == "choice" else {m: r.answers[m].noul for m in allowed})
+        return Decision(max(allowed, key=p.get), time.perf_counter() - t0, {"native": p}, r.usage.input_tokens or 0)
+
+
+class ClmNativeNoulBrain(ClmNativeBrain):
+    name, mode = "clm_native_noul", "noul"
+
+
+class ClmImageNativeBrain(ClmNativeBrain):
+    """kangaroo-clm's image CLM (Qwen3-VL-8B encoder + fine-tuned head) with the CLM-native questions and the frame."""
+
+    name, image = "clm_image_native", True
+
+
 class HeuristicBrain:
     """Hand-written reactive rule over the same scene description, as a reference point."""
 
@@ -182,4 +299,5 @@ class HeuristicBrain:
         return Decision(action)
 
 
-BRAINS = {"jev": JevBrain, "clm": ClmBrain, "heuristic": HeuristicBrain}
+BRAINS = {"jev": JevBrain, "clm": ClmBrain, "clm_native": ClmNativeBrain, "clm_native_noul": ClmNativeNoulBrain,
+          "clm_image_native": ClmImageNativeBrain, "heuristic": HeuristicBrain}
