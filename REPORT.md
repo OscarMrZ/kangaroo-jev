@@ -21,6 +21,8 @@ Exploratory report · October 2026 · benchmark run `20261010-221313`
 
 ## Setup
 
+<img src="docs/img/robot.jpg" width="200" align="right" alt="Kangaroo, 4dof arms">
+
 | Part | Choice |
 | --- | --- |
 | Robot and simulator | `kangaroo_simulation` pregenerated MJCF `floating_4dof_no-end-effector_fixed`, `mujoco_ros2_control`, ROS 2 Humble |
