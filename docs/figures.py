@@ -25,12 +25,13 @@ from kangaroo_systemone.scenarios import SCENARIOS  # noqa: E402
 RUN = Path(sys.argv[1])
 OUT = Path(__file__).parent / "img"
 BLUE, GREY, INK, QUIET, RULE, RED = "#2f6fdf", "#8a9099", "#1d1f23", "#6b7078", "#e4e6ea", "#d0352b"
-ORANGE, GREEN, MAGENTA = "#e07b22", "#2a9d6f", "#c2408f"
+ORANGE, GREEN, MAGENTA, PURPLE = "#e07b22", "#2a9d6f", "#c2408f", "#6a4fc4"
 # Plotting order. "naive": Jev's eight questions; "native": the CLM-native Choice (kangaroo_systemone/brains.py).
-COLORS = {"jev": BLUE, "clm": ORANGE, "clm_native": GREEN, "clm_image_native": MAGENTA, "heuristic": GREY}
+COLORS = {"jev": BLUE, "clm": ORANGE, "clm_native": GREEN, "clm_image_native": MAGENTA, "clm_image_generic": PURPLE,
+          "heuristic": GREY}
 NAMES = {"jev": "Jev", "clm": "CLM naive", "clm_native": "CLM native", "clm_image_native": "CLM image native",
-         "heuristic": "rule"}
-COLOR_WORDS = {BLUE: "blue", ORANGE: "orange", GREEN: "green", MAGENTA: "magenta", GREY: "grey"}
+         "clm_image_generic": "CLM image generic", "heuristic": "rule"}
+COLOR_WORDS = {BLUE: "blue", ORANGE: "orange", GREEN: "green", MAGENTA: "magenta", PURPLE: "purple", GREY: "grey"}
 try:
     FONT = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 34)
 except OSError:
