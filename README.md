@@ -1,4 +1,4 @@
-# kangaroo-jev
+# kangaroo-systemone
 
 Reactive, camera-driven navigation for PAL Robotics' [Kangaroo](https://github.com/pal-robotics/kangaroo_robot) biped in MuJoCo,
 with [TypeSafe Jev](https://docs.typesafe.ai) or [CLM-8B](https://github.com/Contrastive-LM/CLM) making the decisions.
@@ -15,8 +15,8 @@ Everything runs in Docker (ROS 2 Humble, MuJoCo, CPU only). The optional CLM ser
 Container Toolkit.
 
 ```bash
-git clone https://github.com/OscarMrZ/kangaroo-jev.git
-cd kangaroo-jev
+git clone https://github.com/OscarMrZ/kangaroo-systemone.git
+cd kangaroo-systemone
 docker compose build                  # add --profile clm to also build the CLM server
 ```
 
