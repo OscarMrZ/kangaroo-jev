@@ -1,6 +1,6 @@
 # Kangaroo × System One models: reactive navigation
 
-Exploratory report · October 2026 · 120 episodes (6 courses × 4 decision makers × 5 seeds)
+Exploratory report · October 2026 · 150 episodes (6 courses × 5 decision makers × 5 seeds)
 
 ![The six courses](docs/img/courses.jpg)
 
@@ -9,21 +9,23 @@ Exploratory report · October 2026 · 120 episodes (6 courses × 4 decision make
 - **Question.** Can a System One model, one that returns typed judgments rather than text, make the move-by-move
   decisions of a camera-driven reactive navigator on PAL Robotics' Kangaroo biped?
 - **Setup.** Kangaroo (4dof arms) in MuJoCo, walking on PAL's own RL locomotion policy. A head RGB-D camera, four discrete
-  motions, and a red goal cube that is in view from the start. No map, no planner, no pose for the decision maker. Four
+  motions, and a red goal cube that is in view from the start. No map, no planner, no pose for the decision maker. Five
   decision makers see the same scene and obey the same safety margin in code (see [Decision makers](#decision-makers)):
   TypeSafe **Jev**, **CLM-8B** asked Jev's questions (**CLM naive**), **CLM-8B** asked questions written for it
-  (**CLM native**), and a hand-written **rule**.
-- **Result.** No falls in 120 episodes.
+  (**CLM native**), [kangaroo-clm](../kangaroo-clm)'s **image CLM** asked the same CLM-native questions with the camera
+  frame (**CLM image native**), and a hand-written **rule**.
+- **Result.** No falls in 150 episodes.
 
-  | | Jev | CLM naive | CLM native | rule |
-  | --- | --- | --- | --- | --- |
-  | progress, mean ± sd | **49 ± 25%** | 8 ± 3% | 38 ± 24% | **48 ± 29%** |
-  | cube reached | 4 / 30 | 0 / 30 | 2 / 30 | 7 / 30 |
-  | decision latency, median | 0.23 s | 1.59 s | 4 ms (0.2 s uncached) | – |
+  | | Jev | CLM naive | CLM native | CLM image native | rule |
+  | --- | --- | --- | --- | --- | --- |
+  | progress, mean ± sd | **49 ± 25%** | 8 ± 3% | 38 ± 24% | 16 ± 12% | **48 ± 29%** |
+  | cube reached | 4 / 30 | 0 / 30 | 2 / 30 | 0 / 30 | 7 / 30 |
+  | decision latency, median | 0.23 s | 1.59 s | 4 ms (0.2 s uncached) | 90 ms | – |
 
   Jev and the rule are level (+1 pp, 95% CI −9 to +10). Rewriting the questions for CLM lifts it from 8% to 38% (+30 pp in
   all 30 pairs), still 11 pp behind Jev (95% CI +1 to +21). CLM native is the best of all on the walkway turn (90%) and
-  the weakest around the pit.
+  the weakest around the pit. The image CLM, fine-tuned on other wording, barely walks forward with these questions
+  (16%; 36% with its own question in kangaroo-clm's report).
 - **Lessons.**
   1. Safety has to be split from progress. A single "pick the action" question let Jev walk off every raised edge. A safety
      `Noul` and a progress `Score` per motion, with the margin enforced in code, removed the falls.
@@ -34,7 +36,9 @@ Exploratory report · October 2026 · 120 episodes (6 courses × 4 decision make
      left–right reversals per episode in front of walls and edges.
   4. Say what to do when the goal is lost. Jev walks away once the cube is out of sight; CLM native, whose wording says
      "the cube is out of sight", turns to search in 672 of 674 such moves.
-  5. One episode per course is not enough. An earlier single-seed run had Jev ahead of the rule, 47% vs 33%; across five
+  5. A fine-tuned head is tied to the wording it was trained on. kangaroo-clm's image head learned plain motion names
+     as options; given options that describe each motion's consequence, it walks forward on 3% of moves.
+  6. One episode per course is not enough. An earlier single-seed run had Jev ahead of the rule, 47% vs 33%; across five
      seeds that gap disappears.
 
 ## Setup
@@ -51,14 +55,14 @@ Exploratory report · October 2026 · 120 episodes (6 courses × 4 decision make
 flowchart LR
     cam["D435 RGB-D"] --> per["perception<br/>YOLO + depth + memory"]
     per --> scene["scene<br/>4 options"]
-    scene --> dm["decision maker<br/>Jev · CLM naive · CLM native · rule"]
+    scene --> dm["decision maker<br/>Jev · CLM naive · CLM native · CLM image native · rule"]
     dm --> pol["policy in code<br/>geometric veto → model → motion"]
     pol --> cmd["/cmd_vel"] --> loco["PAL v357 walking policy"]
 ```
 
 ## Decision makers
 
-All four get the same scene from perception, and code applies the same geometric veto (a motion needs measured room),
+All five get the same scene from perception, and code applies the same geometric veto (a motion needs measured room),
 so only the choice among the allowed motions differs.
 
 | Name | Model | Questions per move | Runs on |
@@ -66,11 +70,12 @@ so only the choice among the allowed motions differs.
 | **Jev** | TypeSafe Jev (`jev-latest`) | [Jev's questions](#jevs-questions): 8, a safety `Noul` + progress `Score` per motion | TypeSafe API |
 | **CLM naive** | [CLM-8B](https://github.com/Contrastive-LM/CLM) v0.1 (Qwen3-8B encoder + CLM head) | the same 8, unchanged | local RTX 5060 Ti |
 | **CLM native** | CLM-8B v0.1, same server | [CLM-native questions](#clm-native-questions): 1 `Choice` among the allowed motions | local RTX 5060 Ti |
+| **CLM image native** | kangaroo-clm's G+K-mission head: Qwen3-VL-8B (FP8) encoder + a CLM head fine-tuned on camera frames | the same CLM-native `Choice`, with the head-camera frame added to the state | local RTX 5060 Ti |
 | **rule** | none | hand-written: walk forward if the cube is within 15° ahead; else turn towards it if that way has 1.5 m of free run; else keep walking where it is open; if the cube is unknown, turn left to search | – |
 
 ## Experiment
 
-**Episodes.** 6 courses × 4 decision makers × 5 seeds = 120 episodes, each in a fresh simulation.
+**Episodes.** 6 courses × 5 decision makers × 5 seeds = 150 episodes, each in a fresh simulation.
 
 - **Seed:** jitters the start pose by up to ±0.1 m forward, ±0.15 m sideways and ±6° of heading; seed 0 is the nominal
   start, and the cube stays in view at every start. The simulation is not deterministic either (ROS timing), so the same
@@ -150,7 +155,7 @@ questions in one request (TypeSafe's speculative fan-out): for each motion a `No
 
 ### CLM-native questions
 
-Used by **CLM native**. CLM embeds the state and each candidate answer separately and compares them, so everything that
+Used by **CLM native** and **CLM image native**. CLM embeds the state and each candidate answer separately and compares them, so everything that
 tells the motions apart goes into the answers, and numbers become words. Safety stays entirely in code: only the allowed
 motions are offered. One `Choice`, ~50 tokens of state:
 
@@ -180,30 +185,31 @@ left/right" (< 120°) or "behind the robot". The motion with the highest probabi
 | Same design, 5 seeds, 90 moves | same | No falls; Jev 49%, rule 48%. The single-seed lead was noise. |
 | CLM-8B on Jev's questions | same | 8%: its answers barely depend on the scene. |
 | CLM-native questions, chosen offline (below) | same | CLM 38%. |
+| kangaroo-clm's image head on the CLM-native questions + frame | same | 16%. |
 
 ## Results
 
 ### All decision makers
 
-| | Jev | CLM naive | CLM native | rule |
-| --- | --- | --- | --- | --- |
-| reached | 4 / 30 | 0 / 30 | 2 / 30 | 7 / 30 |
-| fell | 0 | 0 | 0 | 0 |
-| grazed | 2 | 0 | 0 | 1 |
-| progress, mean ± sd | 49 ± 25% | 8 ± 3% | 38 ± 24% | 48 ± 29% |
-| moves: forward / turns / backward | 30% / 66% / 3% | 26% / 48% / 26% | 24% / 76% / 0% | 19% / 80% / 0.5% |
-| left–right reversals per episode | 17.8 | 2.6 | 30.2 | 22.1 |
-| decision latency, median | 0.23 s | 1.59 s | 4 ms (cached), 0.2 s (new) | – |
-
-| Course | Jev | CLM naive | CLM native | rule | reached, Jev / naive / native / rule |
+| | Jev | CLM naive | CLM native | CLM image native | rule |
 | --- | --- | --- | --- | --- | --- |
-| walkway turn | 67 ± 27% | 7 ± 4% | **90 ± 13%** | 75 ± 32% | 2 / 0 / 2 / 3 |
-| narrow bridge | 26 ± 6% | 9 ± 2% | 21 ± 3% | 28 ± 7% | 0 / 0 / 0 / 0 |
-| pit | **81 ± 23%** | 6 ± 3% | 26 ± 1% | 62 ± 31% | 2 / 0 / 0 / 2 |
-| crowded walkway | 31 ± 3% | 9 ± 1% | 32 ± 3% | 32 ± 3% | 0 / 0 / 0 / 0 |
-| wall gap | 46 ± 4% | 11 ± 4% | 38 ± 3% | **67 ± 27%** | 0 / 0 / 0 / 2 |
-| staggered walls | **43 ± 18%** | 8 ± 3% | 21 ± 2% | 27 ± 4% | 0 / 0 / 0 / 0 |
-| **all** | **49 ± 25%** | **8 ± 3%** | **38 ± 24%** | **48 ± 29%** | **4 / 0 / 2 / 7** |
+| reached | 4 / 30 | 0 / 30 | 2 / 30 | 0 / 30 | 7 / 30 |
+| fell | 0 | 0 | 0 | 0 | 0 |
+| grazed | 2 | 0 | 0 | 0 | 1 |
+| progress, mean ± sd | 49 ± 25% | 8 ± 3% | 38 ± 24% | 16 ± 12% | 48 ± 29% |
+| moves: forward / turns / backward | 30% / 66% / 3% | 26% / 48% / 26% | 24% / 76% / 0% | 3% / 97% / 0% | 19% / 80% / 0.5% |
+| left–right reversals per episode | 17.8 | 2.6 | 30.2 | 46.7 | 22.1 |
+| decision latency, median | 0.23 s | 1.59 s | 4 ms (cached), 0.2 s (new) | 90 ms | – |
+
+| Course | Jev | CLM naive | CLM native | CLM image native | rule | reached, Jev / naive / native / image / rule |
+| --- | --- | --- | --- | --- | --- | --- |
+| walkway turn | 67 ± 27% | 7 ± 4% | **90 ± 13%** | 29 ± 8% | 75 ± 32% | 2 / 0 / 2 / 0 / 3 |
+| narrow bridge | 26 ± 6% | 9 ± 2% | 21 ± 3% | 20 ± 3% | 28 ± 7% | 0 / 0 / 0 / 0 / 0 |
+| pit | **81 ± 23%** | 6 ± 3% | 26 ± 1% | 25 ± 8% | 62 ± 31% | 2 / 0 / 0 / 0 / 2 |
+| crowded walkway | 31 ± 3% | 9 ± 1% | 32 ± 3% | 13 ± 8% | 32 ± 3% | 0 / 0 / 0 / 0 / 0 |
+| wall gap | 46 ± 4% | 11 ± 4% | 38 ± 3% | 2 ± 3% | **67 ± 27%** | 0 / 0 / 0 / 0 / 2 |
+| staggered walls | **43 ± 18%** | 8 ± 3% | 21 ± 2% | 4 ± 2% | 27 ± 4% | 0 / 0 / 0 / 0 / 0 |
+| **all** | **49 ± 25%** | **8 ± 3%** | **38 ± 24%** | **16 ± 12%** | **48 ± 29%** | **4 / 0 / 2 / 0 / 7** |
 
 Progress is the mean ± sd over 5 seeds. Paired differences in progress over the 30 (course, seed) pairs:
 
@@ -214,6 +220,8 @@ Progress is the mean ± sd over 5 seeds. Paired differences in progress over the
 | CLM native − rule | −10 pp (−20 to −1) | 5 / 22 / 3 |
 | CLM native − CLM naive | +30 pp (+21 to +39) | 30 / 0 / 0 |
 | Jev − CLM naive | +41 pp (+32 to +50) | 30 / 0 / 0 |
+| CLM native − CLM image native | +22 pp (+15 to +31) | 25 / 4 / 1 |
+| Jev − CLM image native | +33 pp (+25 to +42) | 29 / 0 / 1 |
 
 ![Progress per course](docs/img/progress.svg)
 
@@ -224,7 +232,7 @@ Progress is the mean ± sd over 5 seeds. Paired differences in progress over the
 - **Single episodes swing widely.** Start changes of at most 0.15 m and 6° move one pair by up to 69 pp (pit, seed 3), and
   on the walkway each decision maker wins some seeds outright. Only the pooled results and the large per-course gaps are
   worth reading.
-- **Narrow bridge and crowded walkway stall everyone** at 21–32% on every seed. Here the course limits the outcome, not
+- **Narrow bridge and crowded walkway stall everyone** at 13–32% on every seed. Here the course limits the outcome, not
   the decision maker.
 
 ### Jev and the rule
@@ -236,7 +244,7 @@ Progress is the mean ± sd over 5 seeds. Paired differences in progress over the
   walks away (see [Failure modes](#failure-modes)); it never gets through.
 
 Best case for Jev, the pit (seed 3): Jev walks round the hole and reaches the cube in 68 moves; CLM naive shuffles at the
-start; CLM native turns back and forth at the rim; the rule spends its moves at the rim. Frames are re-rendered from the
+start; CLM native and CLM image native turn back and forth at the rim; the rule spends its moves at the rim. Frames are re-rendered from the
 logged base pose (joints at the start posture), with YOLO masks:
 
 ![Pit, camera along the way](docs/img/film_pit.jpg)
@@ -279,8 +287,22 @@ The `Choice` won and went into the closed loop.
 
 ### CLM with camera images
 
-*Pending.* The improved image CLM from [kangaroo-clm](../kangaroo-clm) (Qwen3-VL-8B encoder, head fine-tuned with camera
-frames) will run here with the CLM-native questions and the head-camera frame, on the same 30 episodes.
+**CLM image native** is [kangaroo-clm](../kangaroo-clm)'s improved image CLM, its **G+K-mission** head: a frozen
+Qwen3-VL-8B (FP8) encoder and a CLM head first trained on public image questions, then fine-tuned with camera frames
+from rule-driven Kangaroo episodes, with 40% general-scene replay. Here it gets this report's CLM-native `Choice`, with
+the head-camera frame added to the state, on the same 30 episodes.
+
+- **It barely walks forward.** 3% of its moves are forward, 97% are turns (46.7 left–right reversals per episode). With
+  the cube straight ahead and a long free run it never chose forward (0 of 83 such moves); its median probability for
+  the forward option is 0.15. Progress is 16%, 22 pp below CLM native without the frame (behind in 25 of 30 pairs),
+  and lowest on the wall courses (2–4%).
+- **It stays safe.** No falls and no grazes: the turning is safe on these courses, and code vetoes the rest.
+- **The wording is the likely cause, not the image.** The head was trained on kangaroo-clm's own layout: the frame plus
+  a mission sentence as the state, and the plain motion names as options, labelled with the rule's motion. Options
+  that describe each motion's consequence are new to it. With its own question, the same head made 36% progress in
+  kangaroo-clm's report (1 cube reached), close to the zero-shot CLM native here.
+- **It is fast.** 90 ms median per move with a 424×240 frame (about 106 visual tokens); it does not benefit from the
+  embedding cache, since every frame is new.
 
 ## Model judgments
 
@@ -300,6 +322,8 @@ answer carries no information here, and the veto in code is what kept it from fa
   in 2,700 requests; it chose the rule's motion on 12% of moves.
 - **CLM native:** one state of ~50 tokens and 2–4 short options per move: 0.2 s for a new situation, 2–4 ms when the same
   situation in words recurs (58% of moves). No errors; it chose the rule's motion on 58% of moves.
+- **CLM image native:** 90 ms median with the frame, on the same card. No errors in 2,700 requests; it chose the rule's
+  motion on 45% of moves.
 
 ## Failure modes
 
@@ -317,7 +341,7 @@ answer carries no information here, and the veto in code is what kept it from fa
   turn back. Facing the cube, forward runs into the platform edge within 0.8 m and is vetoed. Facing the bridge, no single
   move improves the view of the cube. Neither decision maker ever lined up with the bridge.
 - **Grazes.** Three episodes came at most 0.09 m inside the 0.3 m footprint margin: Jev twice on the staggered walls, the
-  rule once on the crowded walkway. The base never came closer than 0.21 m to an obstacle. Neither CLM variant grazed.
+  rule once on the crowded walkway. The base never came closer than 0.21 m to an obstacle. No CLM variant grazed.
 - **Fallback turn.** When no motion is allowed, code turns towards the side with more room, without asking the model. In
   this benchmark it never caused a fall, but kangaroo-clm's image heads fell off an edge after such a turn: standing
   still or stepping back would be safer.
@@ -338,8 +362,10 @@ answer carries no information here, and the veto in code is what kept it from fa
   `e939398`), so the served head may differ from the one the README was written with.
 - The CLM episodes ran one at a time, after the Jev and rule episodes; perception was faster (0.14–0.16 s per frame). The
   move budget makes timing irrelevant to the comparison.
-- 14 episodes were restarted (1 Jev, 6 CLM naive, 3 CLM native, 4 rule) because the robot fell during the walking-policy
+- 14 episodes were restarted (1 Jev, 6 CLM naive, 3 CLM native, 0 CLM image native, 4 rule) because the robot fell during the walking-policy
   handover, before the first move; one CLM native episode fell twice there and was run again.
+- CLM image native was asked questions its head was not fine-tuned on; it says how well a fine-tuned head carries over
+  to new wording, not how good the image head is. kangaroo-clm reports the head with its own question.
 - The CLM-native wording was chosen on 213 logged scenes against agreement with the rule and with Jev, not tuned in the
   closed loop. Its word bands are coarse by design; finer bands would separate the turns better but do more of the
   reasoning in code.
@@ -353,6 +379,8 @@ answer carries no information here, and the veto in code is what kept it from fa
 - **Floor view.** Give perception a wider view of the floor (a second camera or a lower tilt), so narrow passages are
   measured earlier.
 - **Variation.** Vary more than the start pose: course geometry, lighting, people's positions.
+- **Image CLM.** Fine-tune the image head on the CLM-native layout (consequence options), or ask it its own question with
+  the frame; then the frame's contribution can be measured against CLM native.
 - **CLM native.** Break the mirror symmetry of the two turns (say which turn faces the cube more directly, or keep a
   remembered turn direction in code), and fine-tune a CLM head on these questions (CLM's `train/finetune.py --task choice`).
 
@@ -364,6 +392,15 @@ export TYPESAFE_API_KEY=...
 OFFLOAD_GB=1.5 docker compose --profile clm up -d clm    # CLM-8B on the GPU; OFFLOAD_GB=0 on cards with 24 GB or more
 docker compose run --rm kangaroo python3 -m kangaroo_jev.bench            # 120 episodes, ~5 h, writes results/<run>/
 docker compose run --rm kangaroo python3 docs/figures.py results/<run> pit:3 wall_gap:0   # regenerates docs/img/
+```
+
+CLM image native needs [kangaroo-clm](../kangaroo-clm)'s encoder and head: start Qwen3-VL-8B with its
+`serve_qwen3_vl_8b.sh` and `clm-serve --state-chat --ckpt runs/gk_mission/all_courses/best_head.pt`, then run the
+benchmark with its `clm` library on the path:
+
+```bash
+docker compose run --rm -v <clm-image>/src:/clm_src:ro -e PYTHONPATH=/clm_src:/kangaroo_jev kangaroo \
+  python3 -m kangaroo_jev.bench --brains clm_image_native
 ```
 
 `results/<run>/summary.md` holds the tables above; each episode's `.jsonl` file holds every scene, decision and raw model
@@ -388,7 +425,8 @@ Upstream code is pinned and not modified; `kangaroo_jev/sim_setup.py` adapts the
   - 4dof model: v357 was the best all-round policy in a MuJoCo sweep of v265, v352–v357 and v700.
 - **CLM.** The `clm` service runs vLLM (Qwen3-8B, last-token pooling, bf16) and `clm-serve`, pinned to CLM commit
   `d5f9ef0`. `kangaroo_jev/brains.py` builds Jev's questions with either SDK's `Noul` and `Score`, so Jev and CLM naive
-  receive identical requests; `ClmNativeBrain` holds the CLM-native questions.
+  receive identical requests; `ClmNativeBrain` holds the CLM-native questions, and `ClmImageNativeBrain` adds the camera
+  frame as a content part for an image CLM (`run_episode` hands it the frame before each move).
 - **Perception.** The floor plane is fitted to the bottom of every frame. Without the fit, a few degrees of torso pitch
   turn distant floor into phantom obstacles or edges.
 
@@ -397,4 +435,5 @@ Upstream code is pinned and not modified; `kangaroo_jev/sim_setup.py` adapts the
 [PAL Robotics](https://github.com/pal-robotics) (`kangaroo_robot`, `kangaroo_simulation`, `pal_policy_deployer`, `pal_mjlab`),
 [mujoco_ros2_control](https://github.com/ros-controls/mujoco_ros2_control), [Ultralytics YOLO](https://github.com/ultralytics/ultralytics)
 (the person billboards are a crop of its `bus.jpg` sample, AGPL-3.0), [TypeSafe](https://docs.typesafe.ai),
-[Contrastive-LM CLM](https://github.com/Contrastive-LM/CLM) (Apache-2.0), [vLLM](https://github.com/vllm-project/vllm).
+[Contrastive-LM CLM](https://github.com/Contrastive-LM/CLM) (Apache-2.0), [vLLM](https://github.com/vllm-project/vllm),
+[kangaroo-clm](../kangaroo-clm) (the image CLM head and its serving setup), [Qwen3-VL](https://github.com/QwenLM/Qwen3-VL).
