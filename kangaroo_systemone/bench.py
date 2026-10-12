@@ -1,7 +1,7 @@
 """Closed-loop benchmark. Every (scenario, brain) episode runs in a fresh simulation.
 
-python3 -m kangaroo_jev.bench                      # all scenarios, jev + clm + heuristic, seeds 0-4
-python3 -m kangaroo_jev.bench --brains heuristic --scenarios pit --seeds 0
+python3 -m kangaroo_systemone.bench                      # all scenarios, jev + clm + heuristic, seeds 0-4
+python3 -m kangaroo_systemone.bench --brains heuristic --scenarios pit --seeds 0
 """
 
 import argparse
@@ -18,11 +18,11 @@ from pathlib import Path
 import numpy as np
 import rclpy
 
-from kangaroo_jev.brains import BRAINS
-from kangaroo_jev.navigator import Navigator, run_episode, spin_in_background
-from kangaroo_jev.scenarios import SCENARIOS
+from kangaroo_systemone.brains import BRAINS
+from kangaroo_systemone.navigator import Navigator, run_episode, spin_in_background
+from kangaroo_systemone.scenarios import SCENARIOS
 
-LAUNCH = Path(__file__).resolve().parent.parent / "sim" / "kangaroo_jev.launch.py"
+LAUNCH = Path(__file__).resolve().parent.parent / "sim" / "kangaroo_systemone.launch.py"
 
 
 def start_sim(scenario, seed, log):
@@ -109,7 +109,7 @@ def main():
     ap.add_argument("--out", default="results")
     args = ap.parse_args()
 
-    from kangaroo_jev.perception import Perception
+    from kangaroo_systemone.perception import Perception
 
     out = Path(args.out) / datetime.now().strftime("%Y%m%d-%H%M%S")
     out.mkdir(parents=True)

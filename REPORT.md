@@ -390,7 +390,7 @@ answer carries no information here, and the veto in code is what kept it from fa
 docker compose --profile clm build
 export TYPESAFE_API_KEY=...
 OFFLOAD_GB=1.5 docker compose --profile clm up -d clm    # CLM-8B on the GPU; OFFLOAD_GB=0 on cards with 24 GB or more
-docker compose run --rm kangaroo python3 -m kangaroo_jev.bench            # 120 episodes, ~5 h, writes results/<run>/
+docker compose run --rm kangaroo python3 -m kangaroo_systemone.bench            # 120 episodes, ~5 h, writes results/<run>/
 docker compose run --rm kangaroo python3 docs/figures.py results/<run> pit:3 wall_gap:0   # regenerates docs/img/
 ```
 
@@ -399,8 +399,8 @@ CLM image native needs [kangaroo-clm](../kangaroo-clm)'s encoder and head: start
 benchmark with its `clm` library on the path:
 
 ```bash
-docker compose run --rm -v <clm-image>/src:/clm_src:ro -e PYTHONPATH=/clm_src:/kangaroo_jev kangaroo \
-  python3 -m kangaroo_jev.bench --brains clm_image_native
+docker compose run --rm -v <clm-image>/src:/clm_src:ro -e PYTHONPATH=/clm_src:/kangaroo_systemone kangaroo \
+  python3 -m kangaroo_systemone.bench --brains clm_image_native
 ```
 
 `results/<run>/summary.md` holds the tables above; each episode's `.jsonl` file holds every scene, decision and raw model
@@ -408,7 +408,7 @@ answer.
 
 ## Integration notes
 
-Upstream code is pinned and not modified; `kangaroo_jev/sim_setup.py` adapts the installed packages at launch.
+Upstream code is pinned and not modified; `kangaroo_systemone/sim_setup.py` adapts the installed packages at launch.
 
 - **Camera.** The MJCF has the RealSense frames but no camera. One is added on `torso_front_up_rgbd_camera_color_frame`
   and published by the `mujoco_ros2_control` CameraPlugin.
@@ -416,7 +416,7 @@ Upstream code is pinned and not modified; `kangaroo_jev/sim_setup.py` adapts the
   logs and metrics are in the course frame.
 - **Humble.**
   - `kang_mjlab_node` reads robot state from ros2_control's pal_statistics introspection topics, which only exist from
-    Jazzy on. `kangaroo_jev/introspection_shim.py` rebuilds them from `/joint_states` and the torso IMU, at 50 Hz sim
+    Jazzy on. `kangaroo_systemone/introspection_shim.py` rebuilds them from `/joint_states` and the torso IMU, at 50 Hz sim
     time. It starts only once the RL controller is active; starting earlier knocks the robot over at the handover.
   - Humble's controller_manager also needs `~/robot_description` remapped to `/robot_description`.
 - **Policies.**
@@ -424,7 +424,7 @@ Upstream code is pinned and not modified; `kangaroo_jev/sim_setup.py` adapts the
     XML. The newer forward/backward policies walk.
   - 4dof model: v357 was the best all-round policy in a MuJoCo sweep of v265, v352–v357 and v700.
 - **CLM.** The `clm` service runs vLLM (Qwen3-8B, last-token pooling, bf16) and `clm-serve`, pinned to CLM commit
-  `d5f9ef0`. `kangaroo_jev/brains.py` builds Jev's questions with either SDK's `Noul` and `Score`, so Jev and CLM naive
+  `d5f9ef0`. `kangaroo_systemone/brains.py` builds Jev's questions with either SDK's `Noul` and `Score`, so Jev and CLM naive
   receive identical requests; `ClmNativeBrain` holds the CLM-native questions, and `ClmImageNativeBrain` adds the camera
   frame as a content part for an image CLM (`run_episode` hands it the frame before each move).
 - **Perception.** The floor plane is fitted to the bottom of every frame. Without the fit, a few degrees of torso pitch

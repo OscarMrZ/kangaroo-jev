@@ -3,7 +3,7 @@ services:
     build:
       context: .
       dockerfile: docker/Dockerfile
-    image: kangaroo-jev
+    image: kangaroo-systemone
     network_mode: host
     ipc: host
     environment:
@@ -11,7 +11,7 @@ services:
       - DISPLAY=${VIEWER_DISPLAY:-}  # headless by default; see README to watch the MuJoCo viewer
       - ROS_DOMAIN_ID=42
     volumes:
-      - .:/kangaroo_jev
+      - .:/kangaroo_systemone
       - /tmp/.X11-unix:/tmp/.X11-unix
 
   # CLM-8B on the GPU, for `--brain clm`: docker compose up -d clm
@@ -20,7 +20,7 @@ services:
     build:
       context: .
       dockerfile: docker/clm/Dockerfile
-    image: kangaroo-jev-clm
+    image: kangaroo-systemone-clm
     network_mode: host
     ipc: host
     environment:

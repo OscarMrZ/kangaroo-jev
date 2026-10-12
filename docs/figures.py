@@ -19,14 +19,14 @@ import mujoco  # noqa: E402
 import numpy as np  # noqa: E402
 from PIL import Image, ImageDraw, ImageFont  # noqa: E402
 
-from kangaroo_jev.brains import MARGIN  # noqa: E402
-from kangaroo_jev.scenarios import SCENARIOS  # noqa: E402
+from kangaroo_systemone.brains import MARGIN  # noqa: E402
+from kangaroo_systemone.scenarios import SCENARIOS  # noqa: E402
 
 RUN = Path(sys.argv[1])
 OUT = Path(__file__).parent / "img"
 BLUE, GREY, INK, QUIET, RULE, RED = "#2f6fdf", "#8a9099", "#1d1f23", "#6b7078", "#e4e6ea", "#d0352b"
 ORANGE, GREEN, MAGENTA = "#e07b22", "#2a9d6f", "#c2408f"
-# Plotting order. "naive": Jev's eight questions; "native": the CLM-native Choice (kangaroo_jev/brains.py).
+# Plotting order. "naive": Jev's eight questions; "native": the CLM-native Choice (kangaroo_systemone/brains.py).
 COLORS = {"jev": BLUE, "clm": ORANGE, "clm_native": GREEN, "clm_image_native": MAGENTA, "heuristic": GREY}
 NAMES = {"jev": "Jev", "clm": "CLM naive", "clm_native": "CLM native", "clm_image_native": "CLM image native",
          "heuristic": "rule"}
@@ -58,7 +58,7 @@ def all_steps(course, brain):
 def scene_dir():
     from ament_index_python.packages import get_package_share_directory as share
 
-    from kangaroo_jev.sim_setup import VARIANT, setup
+    from kangaroo_systemone.sim_setup import VARIANT, setup
 
     setup(share("kangaroo_mujoco"), share("kangaroo_controller_configuration"))
     return Path(share("kangaroo_mujoco")) / "models" / VARIANT
@@ -89,7 +89,7 @@ class Renderer:
 
 
 def yolo_overlay(rgb):
-    from kangaroo_jev.perception import YOLO_CONFIDENCE
+    from kangaroo_systemone.perception import YOLO_CONFIDENCE
 
     r = YOLO(rgb[..., ::-1], conf=YOLO_CONFIDENCE, retina_masks=True, verbose=False)[0]
     return r.plot()[..., ::-1]

@@ -44,9 +44,9 @@ RUN mkdir -p /opt/models && cd /opt/models \
     && python3 -c "from ultralytics import YOLO; YOLO('yolo26n-seg.pt')"
 
 ENV YOLO_MODEL=/opt/models/yolo26n-seg.pt \
-    PYTHONPATH=/kangaroo_jev \
+    PYTHONPATH=/kangaroo_systemone \
     PYTHONUNBUFFERED=1
 COPY docker/entrypoint.sh /entrypoint.sh
-WORKDIR /kangaroo_jev
+WORKDIR /kangaroo_systemone
 ENTRYPOINT ["/entrypoint.sh"]
 CMD ["bash"]

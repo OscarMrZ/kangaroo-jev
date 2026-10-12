@@ -28,8 +28,8 @@ Run one course with the rule-based baseline.
 
 ```bash
 docker compose run --rm kangaroo bash -c "
-  ros2 launch sim/kangaroo_jev.launch.py scenario:=pit seed:=0 &
-  sleep 30 && python3 -m kangaroo_jev.navigator --brain heuristic --scenario pit --seed 0"
+  ros2 launch sim/kangaroo_systemone.launch.py scenario:=pit seed:=0 &
+  sleep 30 && python3 -m kangaroo_systemone.navigator --brain heuristic --scenario pit --seed 0"
 ```
 
 Use Jev instead.
@@ -37,8 +37,8 @@ Use Jev instead.
 ```bash
 export TYPESAFE_API_KEY=...   # https://console.typesafe.ai
 docker compose run --rm kangaroo bash -c "
-  ros2 launch sim/kangaroo_jev.launch.py scenario:=pit seed:=0 &
-  sleep 30 && python3 -m kangaroo_jev.navigator --brain jev --scenario pit --seed 0"
+  ros2 launch sim/kangaroo_systemone.launch.py scenario:=pit seed:=0 &
+  sleep 30 && python3 -m kangaroo_systemone.navigator --brain jev --scenario pit --seed 0"
 ```
 
 Use CLM-8B: start its server on the GPU first (Qwen3-8B encoder + CLM head; set `OFFLOAD_GB=1.5` on 16 GB cards), then
@@ -60,8 +60,8 @@ Run every course with every decision maker (Jev, CLM naive, CLM native, rule) an
 simulation (120 episodes, ~5 h; the CLM server must be up).
 
 ```bash
-docker compose run --rm kangaroo python3 -m kangaroo_jev.bench
-docker compose run --rm kangaroo python3 -m kangaroo_jev.bench --brains heuristic --scenarios pit --seeds 0
+docker compose run --rm kangaroo python3 -m kangaroo_systemone.bench
+docker compose run --rm kangaroo python3 -m kangaroo_systemone.bench --brains heuristic --scenarios pit --seeds 0
 ```
 
 Results go to `results/<run>/`: `summary.md`, `episodes.csv`, and one `.jsonl` per episode with every scene, decision and raw Jev
@@ -75,13 +75,13 @@ docker compose run --rm kangaroo python3 docs/figures.py results/<run>
 
 | Path | What |
 | --- | --- |
-| `sim/kangaroo_jev.launch.py` | MuJoCo sim, introspection shim and PAL walking policy |
-| `kangaroo_jev/sim_setup.py` | D435 camera, course worlds and plugins, applied to the installed PAL packages |
-| `kangaroo_jev/scenarios.py` | courses |
-| `kangaroo_jev/perception.py` | RGB-D frame → scene description |
-| `kangaroo_jev/brains.py` | Jev's questions, CLM-native questions, policy in code, rule-based baseline |
+| `sim/kangaroo_systemone.launch.py` | MuJoCo sim, introspection shim and PAL walking policy |
+| `kangaroo_systemone/sim_setup.py` | D435 camera, course worlds and plugins, applied to the installed PAL packages |
+| `kangaroo_systemone/scenarios.py` | courses |
+| `kangaroo_systemone/perception.py` | RGB-D frame → scene description |
+| `kangaroo_systemone/brains.py` | Jev's questions, CLM-native questions, policy in code, rule-based baseline |
 | `docker/clm/` | CLM-8B server: vLLM Qwen3-8B encoder + `clm-serve` |
-| `kangaroo_jev/navigator.py` | perceive → decide → `/cmd_vel` loop, episode metrics |
-| `kangaroo_jev/bench.py` | benchmark runner |
-| `kangaroo_jev/introspection_shim.py` | ros2_control introspection topics for PAL's policy node on Humble |
+| `kangaroo_systemone/navigator.py` | perceive → decide → `/cmd_vel` loop, episode metrics |
+| `kangaroo_systemone/bench.py` | benchmark runner |
+| `kangaroo_systemone/introspection_shim.py` | ros2_control introspection topics for PAL's policy node on Humble |
 | `docs/figures.py` | report figures |

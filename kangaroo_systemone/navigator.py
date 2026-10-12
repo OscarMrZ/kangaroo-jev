@@ -1,6 +1,6 @@
 """Reactive navigation loop: head camera -> perception -> brain -> /cmd_vel.
 
-python3 -m kangaroo_jev.navigator --brain jev --scenario pit --seed 0   # with the sim already running
+python3 -m kangaroo_systemone.navigator --brain jev --scenario pit --seed 0   # with the sim already running
 """
 
 import argparse
@@ -19,8 +19,8 @@ from rclpy.node import Node
 from rclpy.parameter import Parameter
 from sensor_msgs.msg import Image
 
-from kangaroo_jev.brains import ACTIONS, BRAINS, HeuristicBrain
-from kangaroo_jev.scenarios import SCENARIOS, clearance, start_pose
+from kangaroo_systemone.brains import ACTIONS, BRAINS, HeuristicBrain
+from kangaroo_systemone.scenarios import SCENARIOS, clearance, start_pose
 
 GOAL_TOLERANCE = 0.9  # m from the cube centre: standing right in front of it
 FALL_HEIGHT = 0.5  # base_link z below this = fallen (below the deck = walked off an edge)
@@ -29,7 +29,7 @@ ROBOT_RADIUS = 0.3  # base_link to the outside of the feet, roughly
 
 class Navigator(Node):
     def __init__(self, scenario, seed=0):
-        super().__init__("kangaroo_jev_navigator", parameter_overrides=[Parameter("use_sim_time", value=True)])
+        super().__init__("kangaroo_systemone_navigator", parameter_overrides=[Parameter("use_sim_time", value=True)])
         self.scenario = scenario
         self.start = start_pose(seed)
         self.rgb = self.depth = self.pose = None
@@ -179,7 +179,7 @@ def main():
     ap.add_argument("--decisions", type=int, default=90, help="move budget per episode (1 s of motion each)")
     args = ap.parse_args()
 
-    from kangaroo_jev.perception import Perception
+    from kangaroo_systemone.perception import Perception
 
     rclpy.init()
     node = Navigator(SCENARIOS[args.scenario], args.seed)

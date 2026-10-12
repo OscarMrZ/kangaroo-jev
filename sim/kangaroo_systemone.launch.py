@@ -1,6 +1,6 @@
 """Kangaroo (4dof arms) in MuJoCo + PAL RL locomotion policy, driven by /cmd_vel.
 
-ros2 launch sim/kangaroo_jev.launch.py scenario:=pit seed:=0
+ros2 launch sim/kangaroo_systemone.launch.py scenario:=pit seed:=0
 """
 
 from ament_index_python.packages import get_package_share_directory as share
@@ -18,7 +18,7 @@ def include(pkg, launch_file, **args):
 
 
 def setup(context):
-    from kangaroo_jev.sim_setup import setup
+    from kangaroo_systemone.sim_setup import setup
 
     setup(share("kangaroo_mujoco"), share("kangaroo_controller_configuration"),
           int(LaunchConfiguration("seed").perform(context)))
@@ -36,7 +36,7 @@ def generate_launch_description():
         SetRemap("/controller_manager/robot_description", "/robot_description"),
         include("kangaroo_mujoco", "kangaroo_mujoco.launch.py", arm_type="4dof", moveit="False",
                 world_name=["jev_", LaunchConfiguration("scenario")]),
-        ExecuteProcess(cmd=["python3", "-m", "kangaroo_jev.introspection_shim", "--ros-args", "-p", "use_sim_time:=true"],
+        ExecuteProcess(cmd=["python3", "-m", "kangaroo_systemone.introspection_shim", "--ros-args", "-p", "use_sim_time:=true"],
                        output="screen"),
         # Give controller_manager and the broadcasters time to come up before the policy claims the joints.
         TimerAction(period=8.0, actions=[

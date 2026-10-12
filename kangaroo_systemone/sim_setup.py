@@ -11,12 +11,12 @@ import re
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
-from kangaroo_jev.scenarios import SCENARIOS, start_pose, world_xml
+from kangaroo_systemone.scenarios import SCENARIOS, start_pose, world_xml
 
 VARIANT = "mjcf_data_floating_4dof_no-end-effector_no-end-effector_fixed"
 CAMERA_SITE = "torso_front_up_rgbd_camera_color_frame"
 CAMERA = "head_camera"
-MARKER = "# --- kangaroo_jev ---"
+MARKER = "# --- kangaroo_systemone ---"
 
 PLUGINS_YAML = f"""
 {MARKER}
@@ -117,4 +117,4 @@ if __name__ == "__main__":
     from ament_index_python.packages import get_package_share_directory as share_dir
 
     setup(share_dir("kangaroo_mujoco"), share_dir("kangaroo_controller_configuration"))
-    print("kangaroo_jev sim setup done")
+    print("kangaroo_systemone sim setup done")
