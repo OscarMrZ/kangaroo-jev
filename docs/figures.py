@@ -25,13 +25,13 @@ from kangaroo_systemone.scenarios import SCENARIOS  # noqa: E402
 RUN = Path(sys.argv[1])
 OUT = Path(__file__).parent / "img"
 BLUE, GREY, INK, QUIET, RULE, RED = "#2f6fdf", "#8a9099", "#1d1f23", "#6b7078", "#e4e6ea", "#d0352b"
-ORANGE, GREEN, MAGENTA, PURPLE = "#e07b22", "#2a9d6f", "#c2408f", "#6a4fc4"
+ORANGE, GREEN, MAGENTA, PURPLE, OLIVE = "#e07b22", "#2a9d6f", "#c2408f", "#6a4fc4", "#8f8a1e"
 # Plotting order. "naive": Jev's eight questions; "native": the CLM-native Choice (kangaroo_systemone/brains.py).
 COLORS = {"jev": BLUE, "clm": ORANGE, "clm_native": GREEN, "clm_image_native": MAGENTA, "clm_image_generic": PURPLE,
-          "heuristic": GREY}
+          "clm_image_nav": OLIVE, "heuristic": GREY}
 NAMES = {"jev": "Jev", "clm": "CLM naive", "clm_native": "CLM native", "clm_image_native": "CLM image native",
-         "clm_image_generic": "CLM image generic", "heuristic": "rule"}
-COLOR_WORDS = {BLUE: "blue", ORANGE: "orange", GREEN: "green", MAGENTA: "magenta", PURPLE: "purple", GREY: "grey"}
+         "clm_image_generic": "CLM image generic", "clm_image_nav": "CLM image nav", "heuristic": "rule"}
+COLOR_WORDS = {BLUE: "blue", ORANGE: "orange", GREEN: "green", MAGENTA: "magenta", PURPLE: "purple", OLIVE: "olive", GREY: "grey"}
 try:
     FONT = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 34)
 except OSError:
@@ -171,14 +171,18 @@ def progress_chart():
     pooled = {b: [p for c in courses for p in prog[(c, b)]] for b in BRAINS}
     body = [text(0, 18, f"Progress towards the cube ({len(seeds)} seeds per course, 90 moves per episode)", 15, weight=600),
             text(0, 38, "Share of the start-to-cube distance covered at best (100% = reached); bar: mean, dots: seeds.", 12, QUIET)]
-    x = left
+    x, ly = left, 50
     for b, color in BRAINS.items():
-        body += [f"<rect x='{x}' y='50' width='10' height='10' fill='{color}'/>", text(x + 15, 59, NAMES[b], 11.5)]
+        if x + 15 + 6.5 * len(NAMES[b]) > width:  # wrap the legend
+            x, ly = left, ly + 16
+        body += [f"<rect x='{x}' y='{ly}' width='10' height='10' fill='{color}'/>", text(x + 15, ly + 9, NAMES[b], 11.5)]
         x += 30 + 6.5 * len(NAMES[b])
+    shift = ly - 50
+    height += shift
     for k in (0, 0.5, 1):
-        body += [f"<line x1='{X(k)}' x2='{X(k)}' y1='56' y2='{height - 14}' stroke='{RULE}'/>",
+        body += [f"<line x1='{X(k)}' x2='{X(k)}' y1='{56 + shift}' y2='{height - 14}' stroke='{RULE}'/>",
                  text(X(k), height - 2, f"{k:.0%}", 10.5, QUIET, "middle")]
-    y = 64
+    y = 64 + shift
     for c in courses:
         body.append(text(left - 10, y + bar + 5, c.replace("_", " "), 12, INK, "end"))
         for b, color in BRAINS.items():
