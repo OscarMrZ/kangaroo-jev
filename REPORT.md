@@ -1,6 +1,6 @@
 # Kangaroo × System One models: reactive navigation
 
-Exploratory report · October 2026 · 210 episodes (6 courses × 7 decision makers × 5 seeds)
+Exploratory report · October 2026 · 300 episodes (6 courses × 10 decision makers × 5 seeds)
 
 ![The six courses](docs/img/courses.jpg)
 
@@ -14,8 +14,9 @@ Exploratory report · October 2026 · 210 episodes (6 courses × 7 decision make
   TypeSafe **Jev**; **CLM-8B** asked Jev's questions (**CLM naive**) or questions written for it (**CLM native**);
   three image CLMs from [kangaroo-clm](../kangaroo-clm): its v1 head on the CLM-native questions (**CLM image native**),
   and its v2 navigation heads, taught by a planner, with their own state and questions (**CLM image generic**, with
-  generic pre-training, and **CLM image nav**, robot data only); and a hand-written **rule**.
-- **Result.** No falls in 210 episodes.
+  generic pre-training, and **CLM image nav**, robot data only); and a hand-written **rule**. A second run adds Jev 1.14,
+  on text alone and with head-camera frames (see [Jev with camera frames](#jev-with-camera-frames)).
+- **Result.** No falls in the 210 episodes of the main run.
 
   | | Jev | CLM naive | CLM native | CLM image native | CLM image generic | CLM image nav | rule |
   | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -29,6 +30,20 @@ Exploratory report · October 2026 · 210 episodes (6 courses × 7 decision make
   (16%; 36% with its own question in kangaroo-clm's report). The v2 heads, which imitate a planner rather than the rule,
   are the first models level with the rule (+3 and +6 pp, 95% CIs −7 to +13 and −4 to +15), but they were trained on
   these six courses, from the start poses of seeds 0–3; on the held-out seed 4 they make 50–51% against the rule's 55%.
+
+  The second run, Jev 1.14 (90 episodes):
+
+  | | Jev 1.14 | Jev multi (1 frame) | Jev multi, 10 frames |
+  | --- | --- | --- | --- |
+  | progress, mean ± sd | **58 ± 33%** | 53 ± 30% | 47 ± 25% |
+  | cube reached | **8 / 30** | 7 / 30 | 3 / 30 |
+  | fell | 0 | 1 | 2 |
+  | decision latency, median | 0.22 s | 0.25 s | 0.34 s |
+
+  The newer Jev on the unchanged text request is the best decision maker so far: +9 pp over Jev 1.13 (95% CI +1 to
+  +17), mostly from turning to search when the cube is lost. Camera frames made it worse on the same starts: −5 pp with
+  one frame (CI −10 to −1), −11 pp with the last ten (CI −21 to −3), more cautious, dithering more, and with the first
+  three falls of the benchmark.
 - **Lessons.**
   1. Safety has to be split from progress. A single "pick the action" question let Jev walk off every raised edge. A safety
      `Noul` and a progress `Score` per motion, with the margin enforced in code, removed the falls.
@@ -44,7 +59,9 @@ Exploratory report · October 2026 · 210 episodes (6 courses × 7 decision make
      public scene and navigation data did not add to it here (−3 pp against the robot-only head, CI −10 to +4).
   6. A fine-tuned head is tied to the wording it was trained on. kangaroo-clm's image head learned plain motion names
      as options; given options that describe each motion's consequence, it walks forward on 3% of moves.
-  7. One episode per course is not enough. An earlier single-seed run had Jev ahead of the rule, 47% vs 33%; across five
+  7. Images are not free information. Jev's camera frames made it more cautious and did not stop the dithering; a
+     history of frames without a question that uses it adds tokens and latency, not memory.
+  8. One episode per course is not enough. An earlier single-seed run had Jev ahead of the rule, 47% vs 33%; across five
      seeds that gap disappears.
 
 ## Setup
@@ -61,19 +78,22 @@ Exploratory report · October 2026 · 210 episodes (6 courses × 7 decision make
 flowchart LR
     cam["D435 RGB-D"] --> per["perception<br/>YOLO + depth + memory"]
     per --> scene["scene<br/>4 options"]
-    scene --> dm["decision maker<br/>Jev · CLM naive · CLM native · CLM image native/generic/nav · rule"]
+    scene --> dm["decision maker<br/>Jev (text or + frames) · CLM naive · CLM native · CLM image native/generic/nav · rule"]
     dm --> pol["policy in code<br/>geometric veto → model → motion"]
     pol --> cmd["/cmd_vel"] --> loco["PAL v357 walking policy"]
 ```
 
 ## Decision makers
 
-All seven get the same scene from perception, and code applies the same geometric veto (a motion needs measured room),
+All ten get the same scene from perception, and code applies the same geometric veto (a motion needs measured room),
 so only the choice among the allowed motions differs.
 
 | Name | Model | Questions per move | Runs on |
 | --- | --- | --- | --- |
-| **Jev** | TypeSafe Jev (`jev-latest`) | [Jev's questions](#jevs-questions): 8, a safety `Noul` + progress `Score` per motion | TypeSafe API |
+| **Jev** | TypeSafe Jev (`jev-latest`, 1.13) | [Jev's questions](#jevs-questions): 8, a safety `Noul` + progress `Score` per motion | TypeSafe API |
+| **Jev 1.14** | TypeSafe Jev 1.14 (`jev-1.14.0`) | the same 8 | TypeSafe API |
+| **Jev multi** | Jev 1.14, image input (experimental) | the same 8, with the current head-camera frame added to the state | TypeSafe API |
+| **Jev multi, 10 frames** | Jev 1.14, image input (experimental) | the same 8, with the frames of the last 10 decisions and the motion taken after each | TypeSafe API |
 | **CLM naive** | [CLM-8B](https://github.com/Contrastive-LM/CLM) v0.1 (Qwen3-8B encoder + CLM head) | the same 8, unchanged | local RTX 5060 Ti |
 | **CLM native** | CLM-8B v0.1, same server | [CLM-native questions](#clm-native-questions): 1 `Choice` among the allowed motions | local RTX 5060 Ti |
 | **CLM image native** | kangaroo-clm's G+K-mission head: Qwen3-VL-8B (FP8) encoder + a CLM head fine-tuned on camera frames | the same CLM-native `Choice`, with the head-camera frame added to the state | local RTX 5060 Ti |
@@ -83,7 +103,8 @@ so only the choice among the allowed motions differs.
 
 ## Experiment
 
-**Episodes.** 6 courses × 7 decision makers × 5 seeds = 210 episodes, each in a fresh simulation.
+**Episodes.** 6 courses × 7 decision makers × 5 seeds = 210 episodes in the main run, and 6 courses × 3 × 5 = 90 for Jev
+1.14 with and without frames, each in a fresh simulation.
 
 - **Seed:** jitters the start pose by up to ±0.1 m forward, ±0.15 m sideways and ±6° of heading; seed 0 is the nominal
   start, and the cube stays in view at every start. The simulation is not deterministic either (ROS timing), so the same
@@ -357,6 +378,83 @@ head kangaroo-clm chose for the robot.
   0.3 m footprint margin; crowded walkway for generic, wall gap for nav). No falls.
 - **They answer in 0.13 s** with the frame, on the same 16 GB card.
 
+### Jev with camera frames
+
+Jev also accepts images, still experimentally: a request opts in with the `TypeSafe-Danger-Zone-Images: true` header and
+puts the images into the state, as TypeSafe's image docs describe for Dreamer-style frame histories (`frames[].frame`, oldest
+first). Three decision makers on **Jev 1.14** (`jev-1.14.0`, the current preview; `jev-latest` is 1.13) ran
+on the same 30 starts, in one run, one episode at a time:
+
+| | **Jev 1.14** (`jev@jev-1.14.0`) | **Jev multi** (`jev_multi`) | **Jev multi, 10 frames** (`jev_multi_10`) |
+| --- | --- | --- | --- |
+| state | the legend and the scene, as for Jev | the same, plus `frames`: the current head-camera frame | the same, plus `frames`: the frames of the last 10 decisions, each with the motion taken after it |
+| questions | Jev's 8 | the same 8 | the same 8 |
+| input tokens per decision | 2,300 | 2,790 | 6,320 |
+| decision latency, median / p95 | 0.22 / 0.31 s | 0.25 / 0.40 s | 0.34 / 0.63 s |
+
+A frame is the 424×240 colour image, upscaled to 495×280 (the API takes no side below 280 px) and sent as JPEG, about 490
+input tokens. Each `frames` entry has `moves_ago` (0 for the current frame), `frame`, and `action_after` (the motion
+taken after it; none for the current one). One extra legend line explains these fields. The questions do not mention
+the frames. Jev 1.14 without frames is the control: the three differ only in the frames.
+
+| course | Jev (1.13, published run) | Jev 1.14 | Jev multi | Jev multi, 10 frames | rule |
+| --- | --- | --- | --- | --- | --- |
+| walkway turn | 67% (2) | **94% (2)** | 82% (2) | 78% (1) | 75% (3) |
+| narrow bridge | 26% | 20% | 26% | 23% | **28%** |
+| pit | 81% (2) | **100% (5)** | **100% (5)** | 61% (2) | 62% (2) |
+| crowded walkway | 31% | 31% | 30% | 30% | **32%** |
+| wall gap | 46% | 52% | 45% | 45% | **67% (2)** |
+| staggered walls | 43% | **50% (1)** | 34% | 42% | 27% |
+| **all, mean ± sd** | 49 ± 25% (4) | **58 ± 33% (8)** | 53 ± 30% (7) | 47 ± 25% (3) | 48 ± 29% (7) |
+| fell / grazed | 0 / 2 | 0 / 1 | 1 / 0 | 2 / 2 | 0 / 1 |
+
+Progress, with cubes reached in brackets.
+
+![Progress per course, Jev with frames](docs/img/jev_multi/progress.svg)
+
+- **The frames did not help.** Same model, same starts:
+  - One frame: −5 pp against the text-only request (95% CI −10 to −1). Ahead in 6 pairs, behind in 11, tied in 13.
+  - Ten frames: −11 pp (CI −21 to −3).
+  - Ten frames against one: −6 pp (CI −15 to +3).
+- **Jev 1.14 without frames is the best decision maker so far.**
+  - Score: 58%, and 8 cubes reached.
+  - Against the published Jev 1.13 run: +9 pp (CI +1 to +17).
+  - Against the rule: +9 pp (CI −2 to +20).
+  - None of its episodes ended more than 9 m from the cube (Jev 1.13: 4).
+  - The gain is in the lost cube. With the cube neither visible nor remembered, 1.14 turns on 72% of those moves (1.13: 43%), which is the search the rule does. Nothing in the request changed.
+  - The 1.13 episodes ran under heavier load (two at a time; see [Limitations](#limitations)), but the move budget makes timing irrelevant to the score.
+- **Frames make Jev more cautious, not better informed.**
+  - Without room to walk forward, median p(safe) falls from 0.37 (text) to 0.27 (one frame) and 0.18 (ten frames). The share called safe drops from 6% to 1% (1.13: 29%).
+  - With 1.2 m or more of measured free run ahead, the frames call the step unsafe (p < 0.5) in 6% of decisions, against 1% for text.
+  - The semantic veto (p < 0.3) blocked such a forward step 34 times for Jev multi.
+  - Forward falls from 28% of all moves (text) to 22% (one frame) and 21% (ten frames).
+  - With the cube within 15° ahead and room to walk, the share of forward moves drops from 97% to 89% (one frame) and 94% (ten frames). The forward progress score's median drops from 2.60 to 2.17.
+- **Memory did not stop the dithering.**
+  - Left–right reversals per episode: 19.2 (text), 21.8 (one frame), 22.7 (ten frames). Turns: 63%, 71% and 73% of moves.
+  - The frames show the model which turns it just made, but the questions still judge each motion on its own, and none asks it to commit to one side.
+  - With memory the cube is lost more often: 26%, 34% and 42% of moves.
+- **Three falls, the first in this benchmark** (all off an edge):
+  - Jev multi on the narrow bridge, seed 0.
+  - Ten frames on the pit, seed 0, and on the walkway turn, seed 4.
+
+  In all three, the code veto allowed the fatal move: it had at least 1.0 m of measured free run (twice a turn on the spot, once a forward step). Each came after several moves within 0.6 m of an edge in at least one direction. There, the floor right under the feet is out of the camera's view, and only the 20 s memory knows it. The text-only Jev (60 episodes) and the rule never fell. Three falls in 60 episodes is a warning sign, too few to measure a rate.
+  
+  Narrow bridge, seed 0: Jev multi turns back and forth at the bridge's start and goes over the edge on move 65.
+
+  ![Narrow bridge, camera along the way](docs/img/jev_multi/film_narrow_bridge.jpg)
+
+![Paths, Jev with frames](docs/img/jev_multi/paths.svg)
+
+![Safety calibration, Jev with frames](docs/img/jev_multi/calibration.svg)
+
+![Latency, Jev with frames](docs/img/jev_multi/latency.svg)
+
+- **Cost and reliability.**
+  - Each frame adds about 490 input tokens, all counted in `usage.input_tokens`. One frame makes 2,790 tokens per decision; ten make 6,320, 2.7 times the text request.
+  - Ten frames add 0.12 s at the median and 0.32 s at p95.
+  - No API errors in 7,453 requests.
+  - The three agreed with the rule on 59% (text), 58% (one frame) and 53% (ten frames) of moves.
+
 ## Model judgments
 
 ![Safety calibration](docs/img/calibration.svg)
@@ -379,6 +477,8 @@ answer carries no information here, and the veto in code is what kept it from fa
   motion on 45% of moves.
 - **CLM image generic / nav:** 0.13 s median with the frame (5 questions per move). No errors; they chose the rule's motion
   on 57% and 62% of moves.
+- **Jev 1.14 with frames:** see [Jev with camera frames](#jev-with-camera-frames): about 490 tokens per frame, 0.25 s
+  median with one frame, 0.34 s with ten.
 
 ## Failure modes
 
@@ -395,7 +495,9 @@ answer carries no information here, and the veto in code is what kept it from fa
 - **Narrow passages (both).** The bridge is offset from the robot's line, so getting onto it takes a sidestep: turn, walk,
   turn back. Facing the cube, forward runs into the platform edge within 0.8 m and is vetoed. Facing the bridge, no single
   move improves the view of the cube. Neither decision maker ever lined up with the bridge.
-- **Grazes.** Three episodes came at most 0.09 m inside the 0.3 m footprint margin: Jev twice on the staggered walls, the
+- **Falls with frames.** Jev with camera frames fell off an edge three times in 60 episodes, after dithering close to
+  it; the veto had allowed each fatal move (see [Jev with camera frames](#jev-with-camera-frames)).
+- **Grazes.** In the main run, three episodes came at most 0.09 m inside the 0.3 m footprint margin: Jev twice on the staggered walls, the
   rule once on the crowded walkway. The base never came closer than 0.21 m to an obstacle. No CLM variant grazed.
 - **Fallback turn.** When no motion is allowed, code turns towards the side with more room, without asking the model. In
   this benchmark it never caused a fall, but kangaroo-clm's image heads fell off an edge after such a turn: standing
@@ -417,6 +519,12 @@ answer carries no information here, and the veto in code is what kept it from fa
   `e939398`), so the served head may differ from the one the README was written with.
 - The CLM episodes ran one at a time, after the Jev and rule episodes; perception was faster (0.14–0.16 s per frame). The
   move budget makes timing irrelevant to the comparison.
+- The Jev 1.14 run came four days after the main run, one episode at a time (perception 0.12–0.13 s per frame). Its
+  three decision makers share conditions; comparisons with the main run's (Jev 1.13, the rule) cross runs, and Jev
+  1.13's episodes ran two at a time. Jev's image input is experimental (TypeSafe's "danger zone" header), and the
+  frames were upscaled from 424×240 to meet the API's 280 px minimum.
+- 7 Jev 1.14 episodes were restarted (0 text, 2 one frame, 5 ten frames) after a fall during the walking-policy
+  handover, before the first move.
 - 17 episodes were restarted (1 Jev, 6 CLM naive, 3 CLM native, 0 CLM image native, 1 CLM image generic, 2 CLM image
   nav, 4 rule) because the robot fell during the walking-policy
   handover, before the first move; one CLM native episode fell twice there and was run again.
@@ -438,6 +546,8 @@ answer carries no information here, and the veto in code is what kept it from fa
   in code until a long free run opens.
 - **Floor view.** Give perception a wider view of the floor (a second camera or a lower tilt), so narrow passages are
   measured earlier.
+- **Frames.** Ask a question that only the frames can answer (an edge or obstacle the depth misses, or "has the robot
+  been here in the last moves?"), instead of adding them to questions that the scene already answers.
 - **Variation.** Vary more than the start pose: course geometry, lighting, people's positions.
 - **v2 heads.** Benchmark them on courses and start poses they have not seen (kangaroo-clm's `holdout_new` heads, or new
   seeds) before reading their tie with the rule as a win.
@@ -452,8 +562,17 @@ answer carries no information here, and the veto in code is what kept it from fa
 docker compose --profile clm build
 export TYPESAFE_API_KEY=...
 OFFLOAD_GB=1.5 docker compose --profile clm up -d clm    # CLM-8B on the GPU; OFFLOAD_GB=0 on cards with 24 GB or more
-docker compose run --rm kangaroo python3 -m kangaroo_systemone.bench            # 120 episodes, ~5 h, writes results/<run>/
+docker compose run --rm kangaroo python3 -m kangaroo_systemone.bench            # default decision makers, writes results/<run>/
 docker compose run --rm kangaroo python3 docs/figures.py results/<run> --films pit:3 wall_gap:0   # regenerates docs/img/
+```
+
+Jev 1.14 with and without frames (90 episodes, about 5 h), then the comparison with the main run and its figures:
+
+```bash
+docker compose run --rm kangaroo python3 -m kangaroo_systemone.bench --brains jev_multi jev_multi_10 jev@jev-1.14.0
+docker compose run --rm kangaroo python3 -m kangaroo_systemone.bench --compare results/<run> results/<main run>
+docker compose run --rm kangaroo python3 docs/figures.py results/<run> results/<main run> --out docs/img/jev_multi \
+  --brains jev jev@jev-1.14.0 jev_multi jev_multi_10 heuristic --no-photos --films pit:3 narrow_bridge:0
 ```
 
 CLM image native needs [kangaroo-clm](../kangaroo-clm)'s encoder and head: start Qwen3-VL-8B with its

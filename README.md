@@ -80,7 +80,7 @@ docker compose run --rm kangaroo python3 -m kangaroo_systemone.bench --brains he
 ```
 
 Results go to `results/<run>/`: `summary.md`, `episodes.csv`, and one `.jsonl` per episode with every scene, decision and raw
-model answer. Regenerate the report figures from a run (`--out`, `--films course:seed ...`, `--no-photos`).
+model answer. Regenerate the report figures from a run (`--out`, `--films course:seed ...`, `--no-photos`); several runs merge, and `--brains` picks who is plotted.
 
 ```bash
 docker compose run --rm kangaroo python3 docs/figures.py results/<run>

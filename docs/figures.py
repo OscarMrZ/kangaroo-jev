@@ -15,6 +15,7 @@ import csv
 import json
 import math
 import os
+import sys
 from pathlib import Path
 
 os.environ.setdefault("MUJOCO_GL", "egl")
@@ -31,6 +32,7 @@ ap.add_argument("runs", nargs="+", type=Path, help="results/<run> ...")
 ap.add_argument("--out", type=Path, default=Path(__file__).parent / "img")
 ap.add_argument("--films", nargs="*", default=["pit:3", "wall_gap:0"], help="course:seed episodes to film")
 ap.add_argument("--no-photos", action="store_true", help="skip the course and start-camera photos")
+ap.add_argument("--brains", nargs="+", help="plot only these decision makers (default: all in the runs)")
 args = ap.parse_args()
 OUT = args.out
 BLUE, GREY, INK, QUIET, RULE, RED = "#2f6fdf", "#8a9099", "#1d1f23", "#6b7078", "#e4e6ea", "#d0352b"
@@ -44,7 +46,7 @@ except OSError:
 RUN, rows = {}, []  # decision maker -> its run dir; its episodes
 for run in args.runs:
     for r in csv.DictReader(open(run / "episodes.csv")):
-        if RUN.setdefault(r["brain"], run) == run and r.get("progress"):
+        if RUN.setdefault(r["brain"], run) == run and r.get("progress") and r["brain"] in (args.brains or [r["brain"]]):
             rows.append(r)
 courses = [c for c in SCENARIOS if any(r["scenario"] == c for r in rows)]
 seeds = sorted({int(r["seed"]) for r in rows})
@@ -58,7 +60,10 @@ def plot_order(spec):
 
 
 # decision maker -> colour, in plotting order
-BRAINS = dict(zip(sorted({r["brain"] for r in rows if r["brain"] != "heuristic"}, key=plot_order), COLOR_WORDS))
+models = sorted({r["brain"] for r in rows if r["brain"] != "heuristic"}, key=plot_order)
+if len(models) > len(COLOR_WORDS) - 1:
+    sys.exit(f"{len(models)} decision makers, colours for {len(COLOR_WORDS) - 1}: pick some with --brains")
+BRAINS = dict(zip(models, COLOR_WORDS))
 if any(r["brain"] == "heuristic" for r in rows):
     BRAINS["heuristic"] = GREY
 
@@ -125,7 +130,10 @@ def labelled_grid(images, labels, cols, out, label_h=50):
     for i, (im, label) in enumerate(zip(images, labels)):
         x, y = (i % cols) * (w + 6), (i // cols) * (h + label_h)
         sheet.paste(Image.fromarray(im), (x, y))
-        draw.text((x + 6, y + h + 6), label, fill=INK, font=FONT)
+        font = FONT
+        while draw.textlength(label, font=font) > w - 12 and font.size > 16:  # long names: smaller type
+            font = font.font_variant(size=font.size - 2)
+        draw.text((x + 6, y + h + 6), label, fill=INK, font=font)
     sheet.save(out, quality=82)
 
 
@@ -180,6 +188,14 @@ def legend():
     return ", ".join(f"{COLOR_WORDS[c]} {label(b)}" for b, c in BRAINS.items())
 
 
+def subtitle(t, width):
+    """The grey line under a chart title, wrapped to the chart width; returns (elements, top of the chart body)."""
+    lines, words = [""], t.split(" ")
+    for w in words:
+        lines[-1:] = [f"{lines[-1]} {w}".strip()] if len(lines[-1]) + len(w) < width / 6.3 else [lines[-1], w]
+    return [text(0, 34 + 16 * k, line, 12, QUIET) for k, line in enumerate(lines)], 48 + 16 * (len(lines) - 1)
+
+
 def num(v):
     return None if v in (None, "", "None") else float(v)
 
@@ -222,11 +238,11 @@ def progress_chart():
 
 def distance_chart():
     cw, ch, cols = 250, 135, 3
-    body = [text(0, 16, "Distance to the cube over time", 15, weight=600),
-            text(0, 34, f"One line per seed. {legend()}; dashed red: reached (0.9 m). Lines leaving the top "
-                        "walk away from it.", 12, QUIET)]
+    sub, top = subtitle(f"One line per seed. {legend()}; dashed red: reached (0.9 m). Lines leaving the top walk away "
+                        "from it.", cols * (cw + 5))
+    body = [text(0, 16, "Distance to the cube over time", 15, weight=600)] + sub
     for i, c in enumerate(courses):
-        ox, oy = (i % cols) * (cw + 5), 48 + (i // cols) * (ch + 10)
+        ox, oy = (i % cols) * (cw + 5), top + (i // cols) * (ch + 10)
         gx, gy = SCENARIOS[c].goal
         series = {(b, seed): [(s["t"], math.hypot(gx - s["pose"][0], gy - s["pose"][1])) for s in steps(c, b, seed)]
                   for b in BRAINS for seed in seeds}
@@ -247,7 +263,7 @@ def distance_chart():
                 body.append(f"<polyline points='{pts}' fill='none' stroke='{BRAINS[b]}' stroke-width='1.4' "
                             f"stroke-opacity='0.7'/>")
         body.append("</g>")
-    svg("distance.svg", cols * (cw + 5), 48 + math.ceil(len(courses) / cols) * (ch + 10), body)
+    svg("distance.svg", cols * (cw + 5), top + math.ceil(len(courses) / cols) * (ch + 10), body)
 
 
 def trajectories_chart():
@@ -263,11 +279,11 @@ def trajectories_chart():
         cells.append((c, sc, trails, x0, y1, s))
         heights.append((y1 - y0) * s)
     row_h = [max(heights[i:i + cols]) + 24 for i in range(0, len(courses), cols)]
-    body = [text(0, 16, "Paths (top view)", 15, weight=600),
-            text(0, 34, "Deck white over a 1.5 m drop, walls grey, people brown, cube red; one line per seed: "
-                        f"{legend()}; dots: starts.", 12, QUIET)]
+    sub, top = subtitle("Deck white over a 1.5 m drop, walls grey, people brown, cube red; one line per seed: "
+                        f"{legend()}; dots: starts.", cols * (cw + 8))
+    body = [text(0, 16, "Paths (top view)", 15, weight=600)] + sub
     for i, (c, sc, trails, x0, y1, s) in enumerate(cells):
-        ox, oy = (i % cols) * (cw + 8), 48 + sum(row_h[: i // cols])
+        ox, oy = (i % cols) * (cw + 8), top + sum(row_h[: i // cols])
         X = lambda x: ox + (x - x0) * s
         Y = lambda y: oy + 20 + (y1 - y) * s
         hgt = heights[i]
@@ -291,7 +307,7 @@ def trajectories_chart():
                             f"stroke-width='1.4' stroke-opacity='0.75' stroke-linejoin='round'/>")
         body += [f"<circle cx='{X(t[0][0]):.1f}' cy='{Y(t[0][1]):.1f}' r='2.5' fill='#222'/>" for t in trails.values() if t]
         body.append("</g>")
-    svg("paths.svg", cols * (cw + 8), 48 + sum(row_h), body)
+    svg("paths.svg", cols * (cw + 8), top + sum(row_h), body)
 
 
 def calibration_chart():
@@ -311,7 +327,7 @@ def calibration_chart():
                for c in courses for s in all_steps(c, b) if s.get("answers")]
         tight = [p for d, p in pts if d <= MARGIN["forward"]]
         roomy = [p for d, p in pts if d > MARGIN["forward"]]
-        body += [text(0, top + 18, f"{label(b)}'s p(safe) for walking forward: median {np.median(tight):.2f} without "
+        body += [text(0, top + 18, f"{label(b)}, p(safe) for walking forward: median {np.median(tight):.2f} without "
                                    f"room, {np.median(roomy):.2f} with room", 15, weight=600),
                  text(0, top + 38, f"{sum(p >= 0.5 for p in tight)} of {len(tight)} decisions without room called "
                                    f"safe. One dot per decision.", 12, QUIET),
@@ -344,8 +360,8 @@ def latency_chart():
     body = [text(0, 18, "Decision latency: " + ", ".join(
                 f"{label(b)} {secs(np.median([s['latency_s'] for c in courses for s in all_steps(c, b) if s.get('answers')]))}"
                 for b in models), 15, weight=600),
-            text(0, 38, "Median of moves the model answered. CLM caches embeddings: a situation it has seen before costs "
-                        "a few ms.", 12, QUIET)]
+            text(0, 38, "Median of moves the model answered." + (" CLM caches embeddings: a situation it has seen "
+                        "before costs a few ms." if any(b.startswith("clm") for b in models) else ""), 12, QUIET)]
     for k, b in enumerate(models):
         lat = [s["latency_s"] for c in courses for s in all_steps(c, b) if s.get("answers")]
         counts = [sum(e0 <= v < e1 for v in lat) for e0, e1 in zip(edges, edges[1:])]
