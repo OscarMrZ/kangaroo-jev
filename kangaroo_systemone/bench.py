@@ -1,7 +1,8 @@
-"""Closed-loop benchmark. Every (scenario, brain) episode runs in a fresh simulation.
+"""Closed-loop benchmark. Every (scenario, seed, decision maker) episode runs in a fresh simulation.
 
-python3 -m kangaroo_systemone.bench                      # all scenarios, jev + clm + heuristic, seeds 0-4
+python3 -m kangaroo_systemone.bench                                   # every course, DEFAULT_BRAINS, seeds 0-4
 python3 -m kangaroo_systemone.bench --brains heuristic --scenarios pit --seeds 0
+python3 -m kangaroo_systemone.bench --brains jev jev@jev-preview      # a decision maker with another model
 """
 
 import argparse
@@ -18,7 +19,7 @@ from pathlib import Path
 import numpy as np
 import rclpy
 
-from kangaroo_systemone.brains import BRAINS
+from kangaroo_systemone.brains import DEFAULT_BRAINS, brain_spec, make_brain
 from kangaroo_systemone.navigator import Navigator, run_episode, spin_in_background
 from kangaroo_systemone.scenarios import SCENARIOS
 
@@ -102,7 +103,7 @@ def summarize(rows, brains):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--brains", nargs="+", choices=BRAINS, default=["jev", "clm", "clm_native", "heuristic"])
+    ap.add_argument("--brains", nargs="+", type=brain_spec, default=DEFAULT_BRAINS, help="decision makers, or name@model")
     ap.add_argument("--scenarios", nargs="+", choices=SCENARIOS, default=list(SCENARIOS))
     ap.add_argument("--seeds", nargs="+", type=int, default=[0, 1, 2, 3, 4], help="start pose jitter; 0 = nominal")
     ap.add_argument("--decisions", type=int, default=90, help="move budget per episode (1 s of motion each)")
@@ -114,7 +115,7 @@ def main():
     out = Path(args.out) / datetime.now().strftime("%Y%m%d-%H%M%S")
     out.mkdir(parents=True)
     perception = Perception(os.environ["YOLO_MODEL"])
-    brains = {name: BRAINS[name]() for name in args.brains}
+    brains = {spec: make_brain(spec) for spec in args.brains}
     rclpy.init()
     rows = []
     for seed in args.seeds:

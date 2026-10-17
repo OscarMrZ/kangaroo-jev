@@ -1,17 +1,17 @@
 """Figures for REPORT.md from a benchmark results dir. Runs in the container:
 
-    docker compose run --rm kangaroo python3 docs/figures.py results/<run> [course:seed ...]
+    docker compose run --rm kangaroo python3 docs/figures.py results/<run> [--out docs/img] [--films pit:3 wall_gap:0]
 
-Writes docs/img/: course and camera photos (offline MuJoCo renders of the benchmark scenes at the nominal start; film
-strips of the given episodes re-rendered from their logged base poses, joints at the start posture) and SVG charts over
-all seeds.
+Writes to --out: course and camera photos (offline MuJoCo renders of the benchmark scenes at the nominal start; skip
+with --no-photos), film strips of the given episodes (re-rendered from their logged base poses, joints at the start
+posture) and SVG charts over all seeds.
 """
 
+import argparse
 import csv
 import json
 import math
 import os
-import sys
 from pathlib import Path
 
 os.environ.setdefault("MUJOCO_GL", "egl")
@@ -19,27 +19,41 @@ import mujoco  # noqa: E402
 import numpy as np  # noqa: E402
 from PIL import Image, ImageDraw, ImageFont  # noqa: E402
 
-from kangaroo_systemone.brains import MARGIN  # noqa: E402
+from kangaroo_systemone.brains import BRAINS as REGISTRY  # noqa: E402
+from kangaroo_systemone.brains import MARGIN, label  # noqa: E402
 from kangaroo_systemone.scenarios import SCENARIOS  # noqa: E402
 
-RUN = Path(sys.argv[1])
-OUT = Path(__file__).parent / "img"
+ap = argparse.ArgumentParser()
+ap.add_argument("run", type=Path, help="results/<run>")
+ap.add_argument("--out", type=Path, default=Path(__file__).parent / "img")
+ap.add_argument("--films", nargs="*", default=["pit:3", "wall_gap:0"], help="course:seed episodes to film")
+ap.add_argument("--no-photos", action="store_true", help="skip the course and start-camera photos")
+args = ap.parse_args()
+RUN, OUT = args.run, args.out
 BLUE, GREY, INK, QUIET, RULE, RED = "#2f6fdf", "#8a9099", "#1d1f23", "#6b7078", "#e4e6ea", "#d0352b"
-ORANGE, GREEN, MAGENTA, PURPLE, OLIVE = "#e07b22", "#2a9d6f", "#c2408f", "#6a4fc4", "#8f8a1e"
-# Plotting order. "naive": Jev's eight questions; "native": the CLM-native Choice (kangaroo_systemone/brains.py).
-COLORS = {"jev": BLUE, "clm": ORANGE, "clm_native": GREEN, "clm_image_native": MAGENTA, "clm_image_generic": PURPLE,
-          "clm_image_nav": OLIVE, "heuristic": GREY}
-NAMES = {"jev": "Jev", "clm": "CLM naive", "clm_native": "CLM native", "clm_image_native": "CLM image native",
-         "clm_image_generic": "CLM image generic", "clm_image_nav": "CLM image nav", "heuristic": "rule"}
-COLOR_WORDS = {BLUE: "blue", ORANGE: "orange", GREEN: "green", MAGENTA: "magenta", PURPLE: "purple", OLIVE: "olive", GREY: "grey"}
+COLOR_WORDS = {BLUE: "blue", "#e07b22": "orange", "#2a9d6f": "green", "#c2408f": "magenta", "#6a4fc4": "purple",
+               "#8f8a1e": "olive", "#17a2b8": "teal", "#8b4513": "brown"}  # palette, in assignment order; rule: grey
+COLOR_WORDS[GREY] = "grey"
 try:
     FONT = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 34)
 except OSError:
     FONT = ImageFont.load_default(size=34)
 rows = [r for r in csv.DictReader(open(RUN / "episodes.csv")) if r.get("progress")]
 courses = [c for c in SCENARIOS if any(r["scenario"] == c for r in rows)]
-BRAINS = {b: c for b, c in COLORS.items() if any(r["brain"] == b for r in rows)}  # in plotting order
 seeds = sorted({int(r["seed"]) for r in rows})
+
+
+def plot_order(spec):
+    """Registry order; decision makers run elsewhere just before the rule, which comes last."""
+    names = list(REGISTRY)
+    base = spec.partition("@")[0]
+    return (names.index(base) if base in REGISTRY else names.index("heuristic") - 0.5, spec)
+
+
+# decision maker -> colour, in plotting order
+BRAINS = dict(zip(sorted({r["brain"] for r in rows if r["brain"] != "heuristic"}, key=plot_order), COLOR_WORDS))
+if any(r["brain"] == "heuristic" for r in rows):
+    BRAINS["heuristic"] = GREY
 
 
 def episodes(course, brain):
@@ -135,10 +149,10 @@ def film_strip(course, seed):
             x, y, z, yaw = log[i]["pose"]
             r.place(x, y, z, yaw)
             frames.append(np.array(Image.fromarray(yolo_overlay(r.camera())).resize((424, 240))))
-            labels.append(f"{NAMES[brain]} · move {i + 1}")
+            labels.append(f"{label(brain)} · move {i + 1}")
         end = r.overview([x, y, 0.3], distance=5.5, azimuth=math.degrees(yaw) + 200, elevation=-35)
         frames.append(np.array(Image.fromarray(end).resize((424, 240))))
-        labels.append(f"{NAMES[brain]} · {outcome}")
+        labels.append(f"{label(brain)} · {outcome}")
         strips += list(zip(frames, labels))
     labelled_grid([f for f, _ in strips], [lab for _, lab in strips], 5, OUT / f"film_{course}.jpg", label_h=46)
 
@@ -156,7 +170,7 @@ def svg(name, width, height, body):
 
 
 def legend():
-    return ", ".join(f"{COLOR_WORDS[c]} {NAMES[b]}" for b, c in BRAINS.items())
+    return ", ".join(f"{COLOR_WORDS[c]} {label(b)}" for b, c in BRAINS.items())
 
 
 def num(v):
@@ -173,10 +187,10 @@ def progress_chart():
             text(0, 38, "Share of the start-to-cube distance covered at best (100% = reached); bar: mean, dots: seeds.", 12, QUIET)]
     x, ly = left, 50
     for b, color in BRAINS.items():
-        if x + 15 + 6.5 * len(NAMES[b]) > width:  # wrap the legend
+        if x + 15 + 6.5 * len(label(b)) > width:  # wrap the legend
             x, ly = left, ly + 16
-        body += [f"<rect x='{x}' y='{ly}' width='10' height='10' fill='{color}'/>", text(x + 15, ly + 9, NAMES[b], 11.5)]
-        x += 30 + 6.5 * len(NAMES[b])
+        body += [f"<rect x='{x}' y='{ly}' width='10' height='10' fill='{color}'/>", text(x + 15, ly + 9, label(b), 11.5)]
+        x += 30 + 6.5 * len(label(b))
     shift = ly - 50
     height += shift
     for k in (0, 0.5, 1):
@@ -266,20 +280,20 @@ def trajectories_chart():
         for (b, seed), trail in sorted(trails.items(), key=lambda kv: kv[0][0] != "heuristic"):
             if trail:
                 pts = " ".join(f"{X(p[0]):.1f},{Y(p[1]):.1f}" for p in trail)
-                body.append(f"<polyline points='{pts}' fill='none' stroke='{'#7d838c' if b == 'heuristic' else COLORS[b]}' "
+                body.append(f"<polyline points='{pts}' fill='none' stroke='{'#7d838c' if b == 'heuristic' else BRAINS[b]}' "
                             f"stroke-width='1.4' stroke-opacity='0.75' stroke-linejoin='round'/>")
         body += [f"<circle cx='{X(t[0][0]):.1f}' cy='{Y(t[0][1]):.1f}' r='2.5' fill='#222'/>" for t in trails.values() if t]
         body.append("</g>")
     svg("paths.svg", cols * (cw + 8), 48 + sum(row_h), body)
 
 
-MODELS = ["jev", "clm"]  # decision makers that answer the safety and progress questions (Jev's eight)
-
-
 def calibration_chart():
-    """p(safe) for walking forward against the measured free run, one panel per model."""
+    """p(safe) for walking forward against the measured free run, one panel per model that answers the safety
+    questions (Jev's eight)."""
     width, left, panel = 760, 50, 240
-    models = [b for b in MODELS if b in BRAINS]
+    models = [b for b in BRAINS if any("safe" in s.get("answers", {}) for c in courses for s in all_steps(c, b))]
+    if not models:
+        return
     X = lambda d: left + min(d, 4) / 4.0 * (width - left - 20)
     body = []
     for k, b in enumerate(models):
@@ -290,7 +304,7 @@ def calibration_chart():
                for c in courses for s in all_steps(c, b) if s.get("answers")]
         tight = [p for d, p in pts if d <= MARGIN["forward"]]
         roomy = [p for d, p in pts if d > MARGIN["forward"]]
-        body += [text(0, top + 18, f"{NAMES[b]}'s p(safe) for walking forward: median {np.median(tight):.2f} without "
+        body += [text(0, top + 18, f"{label(b)}'s p(safe) for walking forward: median {np.median(tight):.2f} without "
                                    f"room, {np.median(roomy):.2f} with room", 15, weight=600),
                  text(0, top + 38, f"{sum(p >= 0.5 for p in tight)} of {len(tight)} decisions without room called "
                                    f"safe. One dot per decision.", 12, QUIET),
@@ -303,7 +317,7 @@ def calibration_chart():
                      text(left - 6, Y(v) + 4, f"{v:g}", 10.5, QUIET, "end")]
         for d in range(5):
             body.append(text(X(d), base + 16, f"{d} m", 10.5, QUIET, "middle"))
-        body.append(f"<g fill='{COLORS[b]}' fill-opacity='0.3'>" +
+        body.append(f"<g fill='{BRAINS[b]}' fill-opacity='0.3'>" +
                     "".join(f"<circle cx='{X(d):.0f}' cy='{Y(p):.0f}' r='3'/>" for d, p in pts) + "</g>")
     height = len(models) * (panel + 20) + 10
     body.append(text(width - 20, height - 6, "measured free run of walking forward (m)", 11, QUIET, "end"))
@@ -313,13 +327,15 @@ def calibration_chart():
 def latency_chart():
     """Seconds per decision on a log axis, one histogram per model."""
     width, left, row = 760, 120, 60
-    models = [b for b in BRAINS if b != "heuristic"]
+    models = [b for b in BRAINS if any(s.get("answers") for c in courses for s in all_steps(c, b))]
+    if not models:
+        return
     lo, hi = math.log10(0.001), math.log10(10)
     X = lambda v: left + (math.log10(min(max(v, 0.001), 10)) - lo) / (hi - lo) * (width - left - 20)
     edges = [10 ** (lo + i * (hi - lo) / 80) for i in range(81)]
     secs = lambda v: f"{v * 1000:.0f} ms" if v < 0.1 else f"{v:.2f} s"
     body = [text(0, 18, "Decision latency: " + ", ".join(
-                f"{NAMES[b]} {secs(np.median([s['latency_s'] for c in courses for s in all_steps(c, b) if s.get('answers')]))}"
+                f"{label(b)} {secs(np.median([s['latency_s'] for c in courses for s in all_steps(c, b) if s.get('answers')]))}"
                 for b in models), 15, weight=600),
             text(0, 38, "Median of moves the model answered. CLM caches embeddings: a situation it has seen before costs "
                         "a few ms.", 12, QUIET)]
@@ -327,11 +343,11 @@ def latency_chart():
         lat = [s["latency_s"] for c in courses for s in all_steps(c, b) if s.get("answers")]
         counts = [sum(e0 <= v < e1 for v in lat) for e0, e1 in zip(edges, edges[1:])]
         base = 60 + (k + 1) * row
-        body.append(text(left - 8, base - 4, NAMES[b], 12, INK, "end"))
+        body.append(text(left - 8, base - 4, label(b), 12, INK, "end"))
         for (e0, e1), n in zip(zip(edges, edges[1:]), counts):
             h = n / max(counts) * (row - 12)
             body.append(f"<rect x='{X(e0):.1f}' y='{base - h:.1f}' width='{X(e1) - X(e0) - 1:.1f}' height='{h:.1f}' "
-                        f"fill='{COLORS[b]}' fill-opacity='0.75'/>")
+                        f"fill='{BRAINS[b]}' fill-opacity='0.75'/>")
         body.append(f"<line x1='{left}' x2='{width - 20}' y1='{base}' y2='{base}' stroke='{RULE}'/>")
     base = 60 + len(models) * row
     for v in (0.001, 0.01, 0.1, 1, 10):
@@ -342,11 +358,12 @@ def latency_chart():
 if __name__ == "__main__":
     from ultralytics import YOLO as _YOLO
 
-    OUT.mkdir(exist_ok=True)
+    OUT.mkdir(parents=True, exist_ok=True)
     SCENES = scene_dir()
     YOLO = _YOLO(os.environ["YOLO_MODEL"])
-    photos()
-    for spec in sys.argv[2:] or ["pit:3", "wall_gap:0"]:
+    if not args.no_photos:
+        photos()
+    for spec in args.films:
         course, seed = spec.split(":")
         film_strip(course, int(seed))
     progress_chart(), distance_chart(), trajectories_chart(), calibration_chart(), latency_chart()

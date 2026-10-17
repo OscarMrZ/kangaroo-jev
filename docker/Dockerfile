@@ -1,4 +1,4 @@
-# Kangaroo (PAL Robotics) MuJoCo sim + RL locomotion policy + YOLO/Jev navigation agent.
+# Kangaroo (PAL Robotics) MuJoCo sim + RL locomotion policy + YOLO perception + System One decision makers.
 FROM ros:humble
 
 ENV DEBIAN_FRONTEND=noninteractive
@@ -32,9 +32,9 @@ RUN . /opt/ros/humble/setup.sh \
     && colcon build --cmake-args -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF \
     && rm -rf build log
 
-# Perception + Jev client. CPU torch keeps the image small and avoids host driver coupling.
+# Perception + TypeSafe client (images need >= 0.7.5). CPU torch keeps the image small and avoids host driver coupling.
 RUN pip3 install --no-cache-dir --index-url https://download.pytorch.org/whl/cpu torch torchvision \
-    && pip3 install --no-cache-dir "numpy<2" ultralytics typesafe-sdk
+    && pip3 install --no-cache-dir "numpy<2" ultralytics "typesafe-sdk[pil]>=0.7.5"
 RUN pip3 install --no-cache-dir mujoco  # offline renders for docs/figures.py
 # CLM client only (the server runs in the clm service); the package's own deps pull in vLLM.
 ARG CLM_SHA=d5f9ef0fd9bde185df0ceaad4f4ecc6cfe8c34f6

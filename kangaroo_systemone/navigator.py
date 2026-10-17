@@ -19,7 +19,7 @@ from rclpy.node import Node
 from rclpy.parameter import Parameter
 from sensor_msgs.msg import Image
 
-from kangaroo_systemone.brains import ACTIONS, BRAINS, HeuristicBrain
+from kangaroo_systemone.brains import ACTIONS, HeuristicBrain, brain_spec, make_brain
 from kangaroo_systemone.scenarios import SCENARIOS, clearance, start_pose
 
 GOAL_TOLERANCE = 0.9  # m from the cube centre: standing right in front of it
@@ -70,7 +70,6 @@ class Navigator(Node):
             t.linear.x, t.angular.z = ACTIONS[self.action]["vx"], ACTIONS[self.action]["wz"]
         self.cmd_pub.publish(t)
 
-
     def now(self):
         return self.get_clock().now().nanoseconds * 1e-9
 
@@ -93,6 +92,7 @@ def run_episode(node, perception, brain, decisions=90, period=1.0, log=None):
     decisions rather than seconds, so a slower decision maker (or a loaded machine) gets the same number of moves."""
     node.wait_until(lambda: node.rgb is not None and node.pose is not None, 60, "camera and pose")
     perception.reset()
+    brain.reset()
     reference, history, latencies, perception_s = HeuristicBrain(), [], [], []
     confidences, tokens, errors = [], 0, 0
     start, outcome = node.now(), "out of moves"
@@ -119,9 +119,7 @@ def run_episode(node, perception, brain, decisions=90, period=1.0, log=None):
         scene = perception.describe(node.rgb, node.depth, (x, y, node.pose[3]), node.now())
         perception_s.append(time.perf_counter() - t0)
         scene["recent_actions"] = history[-8:]
-        if hasattr(brain, "frame"):  # decision makers that look at the camera image themselves
-            brain.frame = node.rgb
-        decision = brain(scene)
+        decision = brain(scene, node.rgb)
         node.action, node.action_until = decision.action, node.now() + period
         history.append(decision.action)
         latencies.append(decision.latency_s)
@@ -173,7 +171,7 @@ def spin_in_background(node):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--brain", choices=BRAINS, default="jev")
+    ap.add_argument("--brain", type=brain_spec, default="jev", help="decision maker, or name@model")
     ap.add_argument("--scenario", choices=SCENARIOS, default="walkway_turn", help="the course the sim is running")
     ap.add_argument("--seed", type=int, default=0, help="the seed the sim was launched with")
     ap.add_argument("--decisions", type=int, default=90, help="move budget per episode (1 s of motion each)")
@@ -185,7 +183,7 @@ def main():
     node = Navigator(SCENARIOS[args.scenario], args.seed)
     executor = spin_in_background(node)
     with open(f"navigator_{args.brain}.jsonl", "w") as log:
-        result = run_episode(node, Perception(os.environ["YOLO_MODEL"]), BRAINS[args.brain](), args.decisions, log=log)
+        result = run_episode(node, Perception(os.environ["YOLO_MODEL"]), make_brain(args.brain), args.decisions, log=log)
     print(json.dumps(result, indent=2))
     time.sleep(0.2)
     executor.shutdown()

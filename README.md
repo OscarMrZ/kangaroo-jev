@@ -1,7 +1,8 @@
 # kangaroo-systemone
 
 Reactive, camera-driven navigation for PAL Robotics' [Kangaroo](https://github.com/pal-robotics/kangaroo_robot) biped in MuJoCo,
-with [TypeSafe Jev](https://docs.typesafe.ai) or [CLM-8B](https://github.com/Contrastive-LM/CLM) making the decisions.
+as a benchmark for System One models: [TypeSafe Jev](https://docs.typesafe.ai) (text, or text plus camera frames),
+[CLM-8B](https://github.com/Contrastive-LM/CLM), or any model behind a TypeSafe-compatible API makes the decisions.
 Walking is PAL's own RL policy; the model picks forward, left, right or backward once per move from what the head camera
 sees.
 
@@ -32,7 +33,7 @@ docker compose run --rm kangaroo bash -c "
   sleep 30 && python3 -m kangaroo_systemone.navigator --brain heuristic --scenario pit --seed 0"
 ```
 
-Use Jev instead.
+Use Jev instead (`--brain jev_multi` adds the camera frame, `jev_multi_10` the last 10).
 
 ```bash
 export TYPESAFE_API_KEY=...   # https://console.typesafe.ai
@@ -54,22 +55,47 @@ Courses: `walkway_turn`, `narrow_bridge`, `pit`, `crowded_walkway`, `wall_gap`, 
 start pose (±0.1 m, ±0.15 m, ±6°); seed 0 is the nominal start. An episode ends at the cube, at a fall, or after 90
 moves (`--decisions`).
 
+## Decision makers
+
+| Name | What decides | Needs |
+| --- | --- | --- |
+| `jev` | TypeSafe Jev: a safety `Noul` and a progress `Score` per motion, over perception's scene description | `TYPESAFE_API_KEY` |
+| `jev_multi` | the same, with the current head-camera frame in the state | `TYPESAFE_API_KEY` |
+| `jev_multi_10` | the same, with the last 10 frames (one per move) and the move made after each | `TYPESAFE_API_KEY` |
+| `clm` | CLM-8B on Jev's questions | the `clm` server |
+| `clm_native` | CLM-8B, one `Choice` written for a contrastive model | the `clm` server |
+| `clm_image_native` | an image CLM on the `clm_native` question plus the frame | [kangaroo-clm](../kangaroo-clm)'s server and `clm` library |
+| `heuristic` | hand-written rule | – |
+
+All of them see the same scene, and code applies the same safety margin first; see [REPORT.md](REPORT.md#decision-design).
+
 ## Benchmark
 
-Run every course with every decision maker (Jev, CLM naive, CLM native, rule) and seeds 0–4, each episode in a fresh
-simulation (120 episodes, ~5 h; the CLM server must be up).
+Run every course with every decision maker that runs from this repo alone (all but `clm_image_native`) and seeds 0–4,
+each episode in a fresh simulation (the CLM server must be up). Narrow it with `--brains`, `--scenarios`, `--seeds`.
 
 ```bash
 docker compose run --rm kangaroo python3 -m kangaroo_systemone.bench
 docker compose run --rm kangaroo python3 -m kangaroo_systemone.bench --brains heuristic --scenarios pit --seeds 0
 ```
 
-Results go to `results/<run>/`: `summary.md`, `episodes.csv`, and one `.jsonl` per episode with every scene, decision and raw Jev
-answer. Regenerate the report figures from a run.
+Results go to `results/<run>/`: `summary.md`, `episodes.csv`, and one `.jsonl` per episode with every scene, decision and raw
+model answer. Regenerate the report figures from a run (`--out`, `--films course:seed ...`, `--no-photos`).
 
 ```bash
 docker compose run --rm kangaroo python3 docs/figures.py results/<run>
 ```
+
+## Try a new System One model
+
+- **A new release of a registered model:** `name@model`, e.g. `--brains jev jev@jev-preview jev_multi@jev-1.14.0`. The
+  spec names the episode files and the report rows.
+- **A model behind a TypeSafe-compatible API** (`system_one(state, questions, model=...)` returning `answers` with
+  `noul`, `score` and `confidence`): subclass `SystemOneBrain` with its client and `request()`, like `ClmBrain`, and add
+  it to `BRAINS` in `kangaroo_systemone/brains.py`. It gets Jev's eight questions, the legend and, with `frames`, the
+  camera frames (implement `image()`).
+- **Anything else:** subclass `Brain` and implement `__call__(scene, frame) -> Decision` (and `reset()` if it keeps
+  memory across moves); call `geometrically_safe(scene)` to stay inside the safety margin.
 
 ## Layout
 
@@ -79,7 +105,7 @@ docker compose run --rm kangaroo python3 docs/figures.py results/<run>
 | `kangaroo_systemone/sim_setup.py` | D435 camera, course worlds and plugins, applied to the installed PAL packages |
 | `kangaroo_systemone/scenarios.py` | courses |
 | `kangaroo_systemone/perception.py` | RGB-D frame → scene description |
-| `kangaroo_systemone/brains.py` | Jev's questions, CLM-native questions, policy in code, rule-based baseline |
+| `kangaroo_systemone/brains.py` | decision makers and their registry: Jev's questions (text or with frames), CLM-native questions, policy in code, rule-based baseline |
 | `docker/clm/` | CLM-8B server: vLLM Qwen3-8B encoder + `clm-serve` |
 | `kangaroo_systemone/navigator.py` | perceive → decide → `/cmd_vel` loop, episode metrics |
 | `kangaroo_systemone/bench.py` | benchmark runner |

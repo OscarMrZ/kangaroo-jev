@@ -1,7 +1,15 @@
-"""Decision makers: scene description -> one of four discrete motions."""
+"""Decision makers: scene description (and camera frame) -> one of four discrete motions.
 
+A decision maker is called once per move as `brain(scene, frame)` and reset at the start of every episode. They are
+registered in BRAINS; `make_brain("name@model")` builds one with another model, e.g. `jev@jev-preview`.
+"""
+
+import argparse
+import math
 import time
+from collections import deque
 from dataclasses import dataclass, field
+from functools import partial
 
 # Fixed velocity commands for the 4dof loco policy (v357, trained on vx in [-1, 1], yaw rate up to 0.7).
 # Measured in MuJoCo: ~0.35 m/s forward, ~0.2 m/s backward, ~28 deg/s turning in place.
@@ -36,6 +44,28 @@ class Decision:
     error: str | None = None
 
 
+def fallback_turn(scene):
+    """Nothing is allowed: turn towards the side with the most measured room."""
+    return max(("left", "right"), key=lambda m: scene["options"][m]["free_run_m"])
+
+
+def failed(scene, t0, e):
+    """The model could not be asked: keep the last motion; counted in the benchmark."""
+    last = scene["recent_actions"][-1] if scene["recent_actions"] else "left"
+    return Decision(last, time.perf_counter() - t0, error=repr(e))
+
+
+class Brain:
+    name = "brain"  # set by make_brain to the spec it was built from
+
+    def reset(self):
+        """Forget the episode so far; called at the start of every episode."""
+
+    def __call__(self, scene, frame) -> Decision:
+        """scene: perception's description; frame: the head camera's HxWx3 uint8 RGB image it was measured from."""
+        raise NotImplementedError
+
+
 MOTIONS = {
     "forward": "walk straight ahead for one second, about 0.35 m",
     "left": "turn left on the spot for one second, about 28 degrees",
@@ -58,6 +88,11 @@ SCENE_GUIDE = [
     "`objects` are things the camera recognised (people need more room than boxes).",
     "`recent_actions` are the previous motions, most recent last.",
 ]
+# Added to the legend for decision makers that also get camera images.
+FRAMES_GUIDE = ("`frames` are images from the robot's head camera, one per move, oldest first: the last one "
+                "(`moves_ago` 0) is what the camera sees now, and the numbers above were measured from it. "
+                "`action_after` is the motion the robot made right after an earlier frame.")
+MIN_SIDE = 280  # px: TypeSafe rejects images with a shorter side; the head camera's frames are 424x240
 
 
 def safety_question(motion, sdk):
@@ -97,67 +132,101 @@ def questions(sdk):
                                                                        for m in ACTIONS}
 
 
-class SystemOneBrain:
+class SystemOneBrain(Brain):
     """Speculative fan-out: a safety Noul and a progress Score for every motion, in one request.
 
     Code allows only motions with enough measured room; the model's safety answer can still veto one, and its
-    progress score picks among the rest. Subclasses only send the request."""
+    progress score picks among the rest. `frames`: also send the last that many camera frames (0: text only).
+    Subclasses send the request and turn a frame into an image."""
 
-    def ask(self, state):
-        """-> ({motion: p(safe)}, {motion: progress}, {motion: progress confidence}, input tokens)"""
+    def __init__(self, sdk, model, frames=0):
+        self.model, self.frames, self.questions = model, frames, questions(sdk)
+        self.reset()
+
+    def reset(self):
+        self.past = deque(maxlen=max(self.frames - 1, 0))  # (image, motion made after it)
+
+    def request(self, state):
+        """-> a response whose `answers` hold the eight questions' answers"""
         raise NotImplementedError
 
-    def __call__(self, scene) -> Decision:
+    def image(self, frame):
+        raise NotImplementedError(f"{type(self).__name__} does not take images")
+
+    def state(self, scene, image):
+        # The legend rides in the state: the model reads the state once for all eight questions.
+        if image is None:
+            return {"legend": SCENE_GUIDE, **scene}
+        n = len(self.past)
+        frames = [{"moves_ago": n - i, "image": im, "action_after": a} for i, (im, a) in enumerate(self.past)]
+        return {"legend": SCENE_GUIDE + [FRAMES_GUIDE], **scene, "frames": frames + [{"moves_ago": 0, "image": image}]}
+
+    def __call__(self, scene, frame) -> Decision:
         t0 = time.perf_counter()
+        image = self.image(frame) if self.frames else None
         try:
-            # The legend rides in the state: the model reads the state once for all eight questions.
-            safe, progress, confidence, tokens = self.ask({"legend": SCENE_GUIDE, **scene})
-        except Exception as e:  # keep the last motion; counted in the benchmark
-            last = scene["recent_actions"][-1] if scene["recent_actions"] else "left"
-            return Decision(last, time.perf_counter() - t0, error=repr(e))
-        allowed = [m for m in geometrically_safe(scene) if safe[m] >= SEMANTIC_VETO]
-        if allowed:
-            action = max(allowed, key=lambda m: (progress[m], safe[m]))
-        else:  # nothing passes both checks: turn towards the side with the most measured room
-            action = max(("left", "right"), key=lambda m: scene["options"][m]["free_run_m"])
-        answers = {"safe": safe, "progress": progress, "progress_confidence": confidence}
-        return Decision(action, time.perf_counter() - t0, answers, tokens or 0)
+            r = self.request(self.state(scene, image))
+        except Exception as e:
+            decision = failed(scene, t0, e)
+        else:
+            a = r.answers
+            safe = {m: a[f"safe_{m}"].noul for m in ACTIONS}
+            progress = {m: a[f"progress_{m}"].score for m in ACTIONS}
+            allowed = [m for m in geometrically_safe(scene) if safe[m] >= SEMANTIC_VETO]
+            action = max(allowed, key=lambda m: (progress[m], safe[m])) if allowed else fallback_turn(scene)
+            answers = {"safe": safe, "progress": progress,
+                       "progress_confidence": {m: a[f"progress_{m}"].confidence for m in ACTIONS}}
+            # CLM's input_tokens: encoder tokens actually computed (cache misses), not the size of the request
+            decision = Decision(action, time.perf_counter() - t0, answers, r.usage.input_tokens or 0)
+        if self.frames:
+            self.past.append((image, decision.action))
+        return decision
 
 
 class JevBrain(SystemOneBrain):
-    """TypeSafe Jev over the TypeSafe API."""
+    """TypeSafe Jev over the TypeSafe API; with `frames`, Jev also sees the camera (experimental image input)."""
 
-    name = "jev"
-
-    def __init__(self, model="jev-latest"):
+    def __init__(self, model="jev-latest", frames=0):
         import typesafe_sdk
 
-        self.client, self.model, self.questions = typesafe_sdk.TypeSafeClient(), model, questions(typesafe_sdk)
+        self.client = typesafe_sdk.TypeSafeClient()
+        super().__init__(typesafe_sdk, model, frames)
 
-    def ask(self, state):
-        r = self.client.system_one(state=state, questions=self.questions, model=self.model)
-        return ({m: r.nouls[f"safe_{m}"].noul for m in ACTIONS}, {m: r.scores[f"progress_{m}"].score for m in ACTIONS},
-                {m: r.scores[f"progress_{m}"].confidence for m in ACTIONS}, r.usage.input_tokens)
+    def image(self, frame):
+        from PIL import Image
+        from typesafe_sdk import Image as TypeSafeImage
+
+        im = Image.fromarray(frame)
+        scale = MIN_SIDE / min(im.size)
+        if scale > 1:
+            im = im.resize((math.ceil(im.width * scale), math.ceil(im.height * scale)), Image.LANCZOS)
+        return TypeSafeImage.from_pil(im, format="jpeg")
+
+    def request(self, state):
+        return self.client.system_one(state=state, questions=self.questions, model=self.model,
+                                      extra_headers={"TypeSafe-Danger-Zone-Images": "true"} if self.frames else None)
+
+
+def clm_client():
+    import clm
+
+    client = clm.CLMClient()
+    if not client.health():
+        raise RuntimeError(f"no CLM server at {client.base_url}: start it with `docker compose up -d clm`")
+    return client
 
 
 class ClmBrain(SystemOneBrain):
     """CLM-8B (Contrastive-LM) behind its TypeSafe-compatible API, served locally (`docker compose up clm`)."""
 
-    name = "clm"
-
     def __init__(self, model="clm-latest"):
         import clm
 
-        self.client, self.model, self.questions = clm.CLMClient(), model, questions(clm)
-        if not self.client.health():
-            raise RuntimeError(f"no CLM server at {self.client.base_url}: start it with `docker compose up -d clm`")
+        self.client = clm_client()
+        super().__init__(clm, model)
 
-    def ask(self, state):
-        r = self.client.system_one(state, self.questions, model=self.model)
-        a = r.answers
-        # input_tokens: encoder tokens actually computed (cache misses), not the size of the request
-        return ({m: a[f"safe_{m}"].noul for m in ACTIONS}, {m: a[f"progress_{m}"].score for m in ACTIONS},
-                {m: a[f"progress_{m}"].confidence for m in ACTIONS}, r.usage.input_tokens)
+    def request(self, state):
+        return self.client.system_one(state, self.questions, model=self.model)
 
 
 # ---- CLM-native questions -----------------------------------------------------------------------------------
@@ -214,34 +283,23 @@ def outcome(motion, scene):
     return f"{MOVES[motion]}: {room(o)}{cube}."
 
 
-def native_questions(scene, allowed, sdk, mode):
-    """'choice': one Choice among the allowed motions. 'noul': a Noul per motion, the outcome in the question."""
-    if mode == "choice":
-        return {"move": sdk.Choice(instructions=NATIVE_QUESTION, criteria={m: outcome(m, scene) for m in allowed})}
-    return {m: sdk.Noul(instructions=f"If the robot does this next: {outcome(m, scene)} Does this move get it closer "
-                                     "to the red cube, or help it find the cube?",
-                        criteria={"true": "Yes, this move helps the robot reach or find the red cube.",
-                                  "false": "No, this move does not help the robot reach the red cube."})
-            for m in allowed}
+def native_questions(scene, allowed, sdk):
+    """One Choice among the allowed motions, each option the motion's outcome in words."""
+    return {"move": sdk.Choice(instructions=NATIVE_QUESTION, criteria={m: outcome(m, scene) for m in allowed})}
 
 
-class ClmNativeBrain:
+class ClmNativeBrain(Brain):
     """CLM-8B with CLM-native questions (see above); the motion with the highest probability among the allowed ones.
     `image`: also send the camera frame (needs an image CLM server and clm.content, e.g. kangaroo-clm's)."""
 
-    name, mode, image = "clm_native", "choice", False
-
-    def __init__(self, model="clm-latest"):
+    def __init__(self, model="clm-latest", image=False):
         import clm
 
-        self.sdk, self.client, self.model = clm, clm.CLMClient(), model
-        self.frame = None  # set by run_episode before every decision
-        if not self.client.health():
-            raise RuntimeError(f"no CLM server at {self.client.base_url}: start it with `docker compose up -d clm`")
+        self.sdk, self.client, self.model, self.image = clm, clm_client(), model, image
 
-    def state(self, scene):
+    def state(self, scene, frame):
         text = situation(scene)
-        if not self.image or self.frame is None:
+        if not self.image:
             return text
         import io
 
@@ -249,40 +307,27 @@ class ClmNativeBrain:
         from PIL import Image
 
         buf = io.BytesIO()
-        Image.fromarray(self.frame).save(buf, format="JPEG", quality=92)
+        Image.fromarray(frame).save(buf, format="JPEG", quality=92)
         return with_images(text, [image_part(buf.getvalue(), mime="image/jpeg")])
 
-    def __call__(self, scene) -> Decision:
+    def __call__(self, scene, frame) -> Decision:
         t0 = time.perf_counter()
         allowed = geometrically_safe(scene)
-        if not allowed:  # as for Jev: turn towards the side with the most measured room
-            return Decision(max(("left", "right"), key=lambda m: scene["options"][m]["free_run_m"]), 0.0)
+        if not allowed:
+            return Decision(fallback_turn(scene))
         try:
-            r = self.client.system_one(self.state(scene), native_questions(scene, allowed, self.sdk, self.mode),
+            r = self.client.system_one(self.state(scene, frame), native_questions(scene, allowed, self.sdk),
                                        model=self.model)
-        except Exception as e:  # keep the last motion; counted in the benchmark
-            last = scene["recent_actions"][-1] if scene["recent_actions"] else "left"
-            return Decision(last, time.perf_counter() - t0, error=repr(e))
-        p = (r.answers["move"].probabilities if self.mode == "choice" else {m: r.answers[m].noul for m in allowed})
+        except Exception as e:
+            return failed(scene, t0, e)
+        p = r.answers["move"].probabilities
         return Decision(max(allowed, key=p.get), time.perf_counter() - t0, {"native": p}, r.usage.input_tokens or 0)
 
 
-class ClmNativeNoulBrain(ClmNativeBrain):
-    name, mode = "clm_native_noul", "noul"
-
-
-class ClmImageNativeBrain(ClmNativeBrain):
-    """kangaroo-clm's image CLM (Qwen3-VL-8B encoder + fine-tuned head) with the CLM-native questions and the frame."""
-
-    name, image = "clm_image_native", True
-
-
-class HeuristicBrain:
+class HeuristicBrain(Brain):
     """Hand-written reactive rule over the same scene description, as a reference point."""
 
-    name = "heuristic"
-
-    def __call__(self, scene) -> Decision:
+    def __call__(self, scene, frame=None) -> Decision:
         goal, safe = scene["goal"], geometrically_safe(scene)
         if "bearing_deg" not in goal:
             preferred = ["left", "forward", "right", "backward"]
@@ -294,10 +339,38 @@ class HeuristicBrain:
             # turn towards the cube only if that way is open; otherwise keep walking where it is
             first = [towards] if scene["options"][towards]["free_run_m"] >= 1.5 else []
             preferred = first + ["forward", towards, away, "backward"]
-        fallback = max(("left", "right"), key=lambda m: scene["options"][m]["free_run_m"])
-        action = next((m for m in preferred if m in safe), fallback)
-        return Decision(action)
+        return Decision(next((m for m in preferred if m in safe), fallback_turn(scene)))
 
 
-BRAINS = {"jev": JevBrain, "clm": ClmBrain, "clm_native": ClmNativeBrain, "clm_native_noul": ClmNativeNoulBrain,
-          "clm_image_native": ClmImageNativeBrain, "heuristic": HeuristicBrain}
+# name: (label for reports, factory taking an optional model).
+BRAINS = {
+    "jev": ("Jev", JevBrain),
+    "jev_multi": ("Jev multi", partial(JevBrain, frames=1)),
+    "jev_multi_10": ("Jev multi, 10 frames", partial(JevBrain, frames=10)),
+    "clm": ("CLM naive", ClmBrain),
+    "clm_native": ("CLM native", ClmNativeBrain),
+    "clm_image_native": ("CLM image native", partial(ClmNativeBrain, image=True)),
+    "heuristic": ("rule", HeuristicBrain),
+}
+# Everything that runs from this repo alone (clm_image_native needs kangaroo-clm's image server and clm library).
+DEFAULT_BRAINS = ["jev", "jev_multi", "jev_multi_10", "clm", "clm_native", "heuristic"]
+
+
+def brain_spec(spec):
+    """argparse type: `name` or `name@model`."""
+    if spec.partition("@")[0] not in BRAINS:
+        raise argparse.ArgumentTypeError(f"unknown decision maker {spec!r}; choose from {', '.join(BRAINS)}")
+    return spec
+
+
+def make_brain(spec):
+    name, _, model = spec.partition("@")
+    brain = BRAINS[name][1](**({"model": model} if model else {}))
+    brain.name = spec
+    return brain
+
+
+def label(spec):
+    """Report label of a spec; runs made elsewhere keep their name."""
+    name, _, model = spec.partition("@")
+    return (BRAINS[name][0] if name in BRAINS else name) + (f" ({model})" if model else "")

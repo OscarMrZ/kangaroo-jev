@@ -453,7 +453,7 @@ docker compose --profile clm build
 export TYPESAFE_API_KEY=...
 OFFLOAD_GB=1.5 docker compose --profile clm up -d clm    # CLM-8B on the GPU; OFFLOAD_GB=0 on cards with 24 GB or more
 docker compose run --rm kangaroo python3 -m kangaroo_systemone.bench            # 120 episodes, ~5 h, writes results/<run>/
-docker compose run --rm kangaroo python3 docs/figures.py results/<run> pit:3 wall_gap:0   # regenerates docs/img/
+docker compose run --rm kangaroo python3 docs/figures.py results/<run> --films pit:3 wall_gap:0   # regenerates docs/img/
 ```
 
 CLM image native needs [kangaroo-clm](../kangaroo-clm)'s encoder and head: start Qwen3-VL-8B with its
@@ -497,8 +497,8 @@ Upstream code is pinned and not modified; `kangaroo_systemone/sim_setup.py` adap
   - 4dof model: v357 was the best all-round policy in a MuJoCo sweep of v265, v352–v357 and v700.
 - **CLM.** The `clm` service runs vLLM (Qwen3-8B, last-token pooling, bf16) and `clm-serve`, pinned to CLM commit
   `d5f9ef0`. `kangaroo_systemone/brains.py` builds Jev's questions with either SDK's `Noul` and `Score`, so Jev and CLM naive
-  receive identical requests; `ClmNativeBrain` holds the CLM-native questions, and `ClmImageNativeBrain` adds the camera
-  frame as a content part for an image CLM (`run_episode` hands it the frame before each move).
+  receive identical requests; `ClmNativeBrain` holds the CLM-native questions, and with `image=True` (`clm_image_native`)
+  adds the camera frame as a content part for an image CLM (every decision maker is called with the scene and the frame).
 - **Perception.** The floor plane is fitted to the bottom of every frame. Without the fit, a few degrees of torso pitch
   turn distant floor into phantom obstacles or edges.
 
