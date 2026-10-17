@@ -15,8 +15,8 @@ Exploratory report · October 2026 · 210 episodes (6 courses × 7 decision make
   - Jev 1.14 with head-camera images added to the same request: **Jev 1.14 + frame** (the current frame) and **Jev 1.14 +
     10 frames** (the last ten).
   - **CLM native**: CLM-8B with questions written for it.
-  - **CLM image nav**: [kangaroo-clm](../kangaroo-clm)'s image CLM head, taught by a planner, with its own state and
-    questions.
+  - **CLM image generic**: [kangaroo-clm](../kangaroo-clm)'s image CLM head, pre-trained on public scene and
+    people-navigation data, then fine-tuned on robot decisions labelled by a planner; with its own state and questions.
   - A hand-written **rule**.
 - **Result.** Three falls in 210 episodes, all by Jev with camera frames.
 
@@ -27,7 +27,7 @@ Exploratory report · October 2026 · 210 episodes (6 courses × 7 decision make
   | **Jev, text + images** | Jev 1.14 + frame | 53 ± 30% | 7 / 30 | 1 | 0.25 s |
   | | Jev 1.14 + 10 frames | 47 ± 25% | 3 / 30 | 2 | 0.34 s |
   | **CLM, text** | CLM native | 38 ± 24% | 2 / 30 | 0 | 4 ms (0.2 s uncached) |
-  | **CLM, images** | CLM image nav | 54 ± 28% | 7 / 30 | 0 | 0.13 s |
+  | **CLM, images** | CLM image generic | 51 ± 28% | 4 / 30 | 0 | 0.13 s |
   | **baseline** | rule | 48 ± 29% | 7 / 30 | 0 | – |
 
   - **Jev 1.14 on the unchanged text request is the best decision maker so far.** It gains 9 pp over Jev 1.13 (95% CI +1
@@ -36,22 +36,25 @@ Exploratory report · October 2026 · 210 episodes (6 courses × 7 decision make
     −21 to −3). With frames it was more cautious, dithered more, and caused the only three falls.
   - **Jev 1.13 and the rule are level** (+1 pp, CI −9 to +10).
   - **CLM native** reaches 38%, 11 pp behind Jev 1.13 (CI +1 to +21). Asked Jev's questions unchanged, CLM-8B made 8%.
-  - **CLM image nav** is level with the rule (+6 pp, CI −4 to +15) and reaches as many cubes (7), but it was trained on
-    these six courses, from the start poses of seeds 0–3. On the held-out seed 4 it makes 51%, against the rule's 55% and
-    Jev 1.14's 58%.
+  - **CLM image generic** is level with the rule (+3 pp, CI −7 to +13) and with Jev 1.13. It was fine-tuned on these six
+    courses, from the start poses of seeds 0–3; on the held-out seed 4 it makes 50%, against the rule's 55% and Jev 1.14's
+    58%. Its pre-training carries over: on ten courses it never saw, the head already picks the planner's motion 55% of
+    the time before any robot data, 58% after.
 - **Lessons.**
   1. Safety has to be split from progress. A single "pick the action" question let Jev walk off every raised edge. A safety
      `Noul` and a progress `Score` per motion, with the margin enforced in code, removed the falls.
   2. The questions have to fit the model. CLM embeds the state and each answer separately, so Jev's eight questions,
      which share one long state and differ in one line, give it nothing to tell the motions apart: it rated "step
      backwards" best in every decision. One `Choice` whose options carry each motion's consequence in words works.
-  3. Every decision maker ends up in the reactive local minimum: 63–82% of their moves are turns, with 18–30 left–right
+  3. Every decision maker ends up in the reactive local minimum: 55–80% of their moves are turns, with 18–30 left–right
      reversals per episode in front of walls and edges.
   4. Say what to do when the goal is lost. Jev 1.13 walks away once the cube is out of sight; Jev 1.14, on the same
      questions, mostly turns to search, and CLM native, whose wording says "the cube is out of sight", turns to search in
-     672 of 674 such moves.
-  5. Learning from a planner, not from the rule, pays off: kangaroo-clm's image head, taught by a planner that knows the
-     true layout, is level with the rule and reaches as many cubes (7), on courses it was trained on.
+     672 of 674 such moves. CLM image generic walks on in 78% of such moves and ends 9 of its 10 open-floor episodes more
+     than 9 m away.
+  5. General pre-training gives an image CLM a head start: kangaroo-clm's generic head, fine-tuned on planner-labelled
+     robot decisions, is level with the rule and Jev 1.13, and before fine-tuning it already agreed with the planner on
+     courses it never saw almost as well as after.
   6. Images are not free information. Jev 1.14's camera frames made it more cautious and did not stop the dithering; a
      history of frames without a question that uses it adds tokens and latency, not memory. The newer model on the
      unchanged text request gained more than any added input.
@@ -72,7 +75,7 @@ Exploratory report · October 2026 · 210 episodes (6 courses × 7 decision make
 flowchart LR
     cam["D435 RGB-D"] --> per["perception<br/>YOLO + depth + memory"]
     per --> scene["scene<br/>4 options"]
-    scene --> dm["decision maker<br/>Jev (text or + frames) · CLM native · CLM image nav · rule"]
+    scene --> dm["decision maker<br/>Jev (text or + frames) · CLM native · CLM image generic · rule"]
     dm --> pol["policy in code<br/>geometric veto → model → motion"]
     pol --> cmd["/cmd_vel"] --> loco["PAL v357 walking policy"]
 ```
@@ -94,14 +97,14 @@ Jev without a version, in the sections on the first run, is Jev 1.13.
 | *CLM, text* | | | |
 | **CLM native** (`clm_native`) | [CLM-8B](https://github.com/Contrastive-LM/CLM) v0.1 (Qwen3-8B encoder + CLM head) | [CLM-native questions](#clm-native-questions): 1 `Choice` among the allowed motions | local RTX 5060 Ti |
 | *CLM, images* | | | |
-| **CLM image nav** | kangaroo-clm's v2 K-nav_m head: Qwen3-VL-8B (FP8) encoder + a CLM head trained on planner-labelled Kangaroo episodes (with mirrored copies), its chosen robot head | [kangaroo-clm's mission questions](#kangaroo-clms-mission-questions): frame + mission + tracker status, action `Choice` + 4 safety `Noul`s | local RTX 5060 Ti |
+| **CLM image generic** | kangaroo-clm's v2 G2+K_m head: Qwen3-VL-8B (FP8) encoder + a CLM head pre-trained on public scene questions and people navigating, then fine-tuned on planner-labelled Kangaroo episodes (with mirrored copies) and 40% replay of the general data | [kangaroo-clm's mission questions](#kangaroo-clms-mission-questions): frame + mission + tracker status, action `Choice` + 4 safety `Noul`s | local RTX 5060 Ti |
 | *baseline* | | | |
 | **rule** | none | hand-written: walk forward if the cube is within 15° ahead; else turn towards it if that way has 1.5 m of free run; else keep walking where it is open; if the cube is unknown, turn left to search | – |
 
 ## Experiment
 
 **Episodes.** 6 courses × 7 decision makers × 5 seeds = 210 episodes, each in a fresh simulation, in two runs: Jev 1.13,
-CLM native, CLM image nav and the rule first; the three Jev 1.14 decision makers four days later, on the same starts.
+CLM native, CLM image generic and the rule first; the three Jev 1.14 decision makers four days later, on the same starts.
 
 - **Seed:** jitters the start pose by up to ±0.1 m forward, ±0.15 m sideways and ±6° of heading; seed 0 is the nominal
   start, and the cube stays in view at every start. The simulation is not deterministic either (ROS timing), so the same
@@ -203,7 +206,7 @@ left/right" (< 120°) or "behind the robot". The motion with the highest probabi
 
 ### kangaroo-clm's mission questions
 
-Used by **CLM image nav**, through kangaroo-clm's own `clm_nav` brain, unchanged. The state is the
+Used by **CLM image generic**, through kangaroo-clm's own `clm_nav` brain, unchanged. The state is the
 head-camera frame plus a short legend and a tracker kept in code: the mission sentence ("Go to the red cube that stands
 on a grey pedestal and stop in front of it."), whether the target is in view or where it was last seen and how many moves
 ago, a status (stuck, dithering, long turning, budget), and the recent motions. No distances or detected objects: the
@@ -221,14 +224,14 @@ trained on these questions, labelled by a planner that sees the true layout and 
 | Same design, 5 seeds, 90 moves | same | No falls; Jev 49%, rule 48%. The single-seed lead was noise. |
 | CLM-8B on Jev's questions | same | 8%: its answers barely depend on the scene. |
 | CLM-native questions, chosen offline (below) | same | CLM 38%. |
-| kangaroo-clm's planner-taught image head, own mission questions | same | 54%. |
+| kangaroo-clm's image heads, own mission questions | same | 51% (pre-trained, then fine-tuned) and 54% (robot data only). |
 | Jev 1.14; Jev 1.14 with camera frames | same | 58%; 53% with one frame, 47% with ten. |
 
 ## Results
 
 ### All decision makers
 
-The first run had Jev 1.13, CLM native, CLM image nav and the rule; the second, four days later, the three Jev 1.14
+The first run had Jev 1.13, CLM native, CLM image generic and the rule; the second, four days later, the three Jev 1.14
 decision makers, on the same 30 starts.
 
 | | Decision maker | reached | fell | grazed | progress, mean ± sd | moves: forward / turns / backward | left–right reversals per episode | decision latency, median |
@@ -238,7 +241,7 @@ decision makers, on the same 30 starts.
 | **Jev, text + images** | Jev 1.14 + frame | 7 / 30 | 1 | 0 | 53 ± 30% | 22% / 71% / 7% | 21.8 | 0.25 s |
 | | Jev 1.14 + 10 frames | 3 / 30 | 2 | 2 | 47 ± 25% | 22% / 72% / 6% | 22.7 | 0.34 s |
 | **CLM, text** | CLM native | 2 / 30 | 0 | 0 | 38 ± 24% | 24% / 76% / 0% | 30.2 | 4 ms (cached), 0.2 s (new) |
-| **CLM, images** | CLM image nav | 7 / 30 | 0 | 2 | 54 ± 28% | 17% / 82% / 0% | 25.7 | 0.13 s |
+| **CLM, images** | CLM image generic | 4 / 30 | 0 | 2 | 51 ± 28% | 44% / 55% / 1% | 21.4 | 0.13 s |
 | **baseline** | rule | 7 / 30 | 0 | 1 | 48 ± 29% | 19% / 80% / 0.5% | 22.1 | – |
 
 Progress per course:
@@ -254,7 +257,7 @@ Progress per course:
 | *CLM, text* | | | | | | | |
 | CLM native | 90 ± 13% (2) | 21 ± 3% | 26 ± 1% | 32 ± 3% | 38 ± 3% | 21 ± 2% | 38 ± 24% (2) |
 | *CLM, images* | | | | | | | |
-| CLM image nav | **95 ± 9% (4)** | 27 ± 4% | 79 ± 27% (3) | **40 ± 10%** | 46 ± 4% | 36 ± 13% | 54 ± 28% (7) |
+| CLM image generic | **95 ± 9% (3)** | 21 ± 2% | 76 ± 23% (1) | **45 ± 10%** | 45 ± 2% | 28 ± 2% | 51 ± 28% (4) |
 | *baseline* | | | | | | | |
 | rule | 75 ± 32% (3) | **28 ± 7%** | 62 ± 31% (2) | 32 ± 3% | **67 ± 27% (2)** | 27 ± 4% | 48 ± 29% (7) |
 
@@ -266,7 +269,7 @@ Progress is the mean ± sd over 5 seeds. Paired differences in progress over the
 | --- | --- | --- |
 | Jev 1.14 − Jev 1.13 | +9 pp (+1 to +17) | 14 / 11 / 5 |
 | Jev 1.14 − rule | +9 pp (−2 to +20) | 12 / 9 / 9 |
-| Jev 1.14 − CLM image nav | +4 pp (−4 to +13) | 8 / 15 / 7 |
+| Jev 1.14 − CLM image generic | +6 pp (−1 to +14) | 16 / 9 / 5 |
 | Jev 1.14 − CLM native | +20 pp (+10 to +31) | 19 / 6 / 5 |
 | Jev 1.14 + frame − Jev 1.14 | −5 pp (−10 to −1) | 6 / 11 / 13 |
 | Jev 1.14 + 10 frames − Jev 1.14 | −11 pp (−21 to −3) | 10 / 12 / 8 |
@@ -276,9 +279,9 @@ Progress is the mean ± sd over 5 seeds. Paired differences in progress over the
 | Jev 1.13 − rule | +1 pp (−9 to +10) | 14 / 10 / 6 |
 | Jev 1.13 − CLM native | +11 pp (+1 to +21) | 22 / 5 / 3 |
 | CLM native − rule | −10 pp (−20 to −1) | 5 / 22 / 3 |
-| CLM image nav − rule | +6 pp (−4 to +15) | 14 / 12 / 4 |
-| CLM image nav − Jev 1.13 | +5 pp (−2 to +12) | 16 / 10 / 4 |
-| CLM image nav − CLM native | +16 pp (+9 to +24) | 26 / 0 / 4 |
+| CLM image generic − rule | +3 pp (−7 to +13) | 13 / 12 / 5 |
+| CLM image generic − Jev 1.13 | +2 pp (−7 to +12) | 11 / 15 / 4 |
+| CLM image generic − CLM native | +13 pp (+7 to +21) | 23 / 4 / 3 |
 
 ![Progress per course](docs/img/progress.svg)
 
@@ -289,7 +292,7 @@ Progress is the mean ± sd over 5 seeds. Paired differences in progress over the
 - **Single episodes swing widely.** Start changes of at most 0.15 m and 6° move one pair by up to 69 pp (pit, seed 3), and
   on the walkway each decision maker wins some seeds outright. Only the pooled results and the large per-course gaps are
   worth reading.
-- **The narrow bridge stalls everyone** at 20–28%; the crowded walkway stalls all but CLM image nav (40%). Here the course
+- **The narrow bridge stalls everyone** at 20–28%; the crowded walkway stalls all but CLM image generic (45%). Here the course
   limits the outcome, not the decision maker.
 
 ### Jev 1.13 and the rule
@@ -301,8 +304,8 @@ Progress is the mean ± sd over 5 seeds. Paired differences in progress over the
   walks away (see [Failure modes](#failure-modes)); it never gets through.
 
 Best case for Jev, the pit (seed 3): Jev 1.13 walks round the hole and reaches the cube in 68 moves; so do Jev 1.14 (62),
-Jev 1.14 + frame (45), Jev 1.14 + 10 frames (64) and CLM image nav (77). CLM native turns back and forth at the rim, and
-the rule spends its moves at the rim. Frames are re-rendered from the logged base pose (joints at the start posture), with
+Jev 1.14 + frame (45) and Jev 1.14 + 10 frames (64). CLM image generic runs out of moves, CLM native turns back and forth
+at the rim, and the rule spends its moves at the rim. Frames are re-rendered from the logged base pose (joints at the start posture), with
 YOLO masks:
 
 ![Pit, camera along the way](docs/img/film_pit.jpg)
@@ -401,23 +404,37 @@ The `Choice` won and went into the closed loop.
 - **It is fast because the words repeat.** The same situation in words recurs, so CLM's embedding cache answers 58% of
   its decisions in 2–4 ms; a new situation takes about 0.2 s on the 16 GB card.
 
-### CLM image nav
+### CLM image generic
 
-**CLM image nav** is [kangaroo-clm](../kangaroo-clm)'s K-nav_m head, the one it chose for the robot: a frozen Qwen3-VL-8B
-(FP8) encoder and a CLM head trained on Kangaroo episodes. The labels come from a planner that sees the true layout and
-pose (not from the rule), the training episodes include mirrored copies (frame flipped, left and right swapped) to remove
-a left-turning bias, and the state carries the frame, the mission and a tracker instead of perception's numbers (see
+**CLM image generic** is [kangaroo-clm](../kangaroo-clm)'s G2+K_m head: a frozen Qwen3-VL-8B (FP8) encoder and a CLM head
+first pre-trained on 97k rows of public data, then fine-tuned on Kangaroo episodes with 40% of that data replayed. The
+pre-training mixes general scene questions with navigation decisions of people and robots: EgoWalk (city walking with
+language goals: which way the walked path goes 2 m ahead), MuSoHu (walking through crowds, and whether a person is in
+the way), SocialNav-SUB (robot clips in crowds, with human labels) and SAT (synthetic questions such as which way to turn
+to face an object). The robot labels come from a planner that sees the
+true layout and pose (not from the rule); every episode is also mirrored (frame flipped, left and right swapped) to remove
+a left-turning bias. The state carries the frame, the mission and a tracker instead of perception's numbers (see
 [kangaroo-clm's mission questions](#kangaroo-clms-mission-questions)).
 
-- **It is level with the rule.** 54% of the way against the rule's 48% (+6 pp, CI −4 to +15) and Jev 1.13's 49%, and it
-  reaches as many cubes as the rule (7). It is the best of all on the walkway turn (95%) and the crowded walkway (40%),
-  and close to Jev at the pit.
-- **It was trained here, though.** Its training episodes come from these six courses (and ten more), from the start
-  poses of seeds 0–3; only seed 4 was held out. On seed 4 alone it makes 51% (1 cube) against Jev 1.13's 57% (1), Jev
-  1.14's 58% (1) and the rule's 55% (2), on 6 episodes each. So the match with the rule is partly familiarity with these
-  exact starts, unlike Jev, CLM native and the rule, which never saw the courses.
-- **It still dithers and grazes.** 26 left–right reversals per episode, and two grazes on the wall gap (up to 0.04 m inside
-  the 0.3 m footprint margin). No falls.
+- **It is level with the rule and Jev 1.13.** 51% of the way against 48% and 49% (+3 pp, CI −7 to +13; +2 pp, CI −7 to
+  +12), 13 pp ahead of CLM native (CI +7 to +21) and 6 pp behind Jev 1.14 (CI −1 to +14). It reaches 4 cubes. It is the
+  best of all on the walkway turn (95%) and the crowded walkway (45%), and weakest on the walls.
+- **It drives forward.** 44% of its moves are forward, more than any other decision maker, and it turns least (55%,
+  21 reversals per episode). That helps on the walkways and hurts on the walls.
+- **It walks away when the cube is lost.** In 780 moves (29%) the cube was neither visible nor remembered; it walked
+  forward in 607 of them. 9 of its 10 open-floor episodes (wall gap, staggered walls) ended more than 9 m from the cube.
+  Its mission tracker says where the cube was last seen, but the head was not taught to search.
+- **Its fine-tuning saw these courses.** The robot episodes come from these six courses (and ten more), from the start
+  poses of seeds 0–3; only seed 4 was held out. On seed 4 it makes 50% (no cube) against Jev 1.13's 57% (1), Jev 1.14's
+  58% (1) and the rule's 55% (2), on 6 episodes each.
+- **The pre-training carries over.** In kangaroo-clm's offline test on ten courses it never trained on (`holdout_new`
+  fold), the pre-trained head picks the planner's motion 55% of the time before any robot data and 58% after fine-tuning,
+  level with a head trained on robot data alone (58%, which starts from nothing). It also keeps its general skills: 68%
+  on public scene questions and 69% on navigation evaluations after fine-tuning.
+- **Against the robot-only head.** kangaroo-clm's K-nav_m, the same recipe without pre-training or replay, made 54% here
+  (7 cubes), 3 pp more (CI −4 to +10). It turns much more (82% of moves), searches when the cube is lost, and never
+  walked away; it was trained only on these sim decisions.
+- **It grazes.** Two grazes on the crowded walkway, up to 0.09 m inside the 0.3 m footprint margin. No falls.
 - **It answers in 0.13 s** with the frame, on the same 16 GB card.
 
 ## Model judgments
@@ -428,8 +445,8 @@ These are the safety answers for walking forward, against the free run perceptio
 measured room only roughly: with room to walk, the median p(safe) is 0.91; without it, 0.41, and 29% of forward steps
 without room are still called safe. Jev 1.14 separates the two better (6% called safe without room); with camera frames
 it calls fewer steps safe on both sides of the margin (see [Jev 1.14](#jev-114-with-and-without-camera-frames)). CLM
-image nav judges safety from the frame alone, without perception's distances, and calls 90% of forward steps without
-measured room safe (median 0.83). The margin belongs in code; a model's safety answer is useful as an extra veto, not as
+image generic judges safety from the frame alone, without perception's distances, and calls every forward step without
+measured room safe (median 0.88). The margin belongs in code; a model's safety answer is useful as an extra veto, not as
 the only one.
 
 ![Latency](docs/img/latency.svg)
@@ -442,8 +459,8 @@ the only one.
 - **CLM native:** one state of ~50 tokens and 2–4 short options per move: 0.2 s for a new situation on a 16 GB RTX 5060
   Ti, 2–4 ms when the same situation in words recurs (58% of moves). No errors; it chose the rule's motion on 58% of
   moves.
-- **CLM image nav:** 0.13 s median with the frame (5 questions per move), on the same card. No errors; it chose the
-  rule's motion on 62% of moves.
+- **CLM image generic:** 0.13 s median with the frame (5 questions per move), on the same card. No errors in 2,662
+  requests; it chose the rule's motion on 57% of moves.
 
 ## Failure modes
 
@@ -454,7 +471,8 @@ the only one.
   than 9 m from the cube; the rule never did. In each case the cube was out of view, and usually out of the 20 s memory too.
   The likely cause: Jev's progress `Score` has no level for "cube unknown", so every free step forward rates as progress.
   The rule turns on the spot to search instead, and so does CLM native, whose wording says "the cube is out of sight".
-  Jev 1.14 never did, on the same questions: with the cube lost it turns on 72% of moves (Jev 1.13: 43%).
+  Jev 1.14 never did, on the same questions: with the cube lost it turns on 72% of moves (Jev 1.13: 43%). CLM image
+  generic did in 9 of 10 (see [CLM image generic](#clm-image-generic)).
   Wall gap, seed 0: Jev loses the cube behind the wall and walks off; the rule follows the wall to the gap.
 
   ![Wall gap, camera along the way](docs/img/film_wall_gap.jpg)
@@ -464,8 +482,8 @@ the only one.
 - **Falls with frames.** Jev with camera frames fell off an edge three times in 60 episodes, after dithering close to
   it; the veto had allowed each fatal move (see [Jev with camera frames](#jev-114-with-and-without-camera-frames)).
 - **Grazes.** Eight episodes came at most 0.09 m inside the 0.3 m footprint margin: Jev 1.13 twice on the staggered
-  walls, Jev 1.14 once and CLM image nav twice on the wall gap, Jev 1.14 + 10 frames twice (crowded walkway, staggered
-  walls), the rule once on the crowded walkway. The base never came closer than 0.21 m to an obstacle.
+  walls, Jev 1.14 once on the wall gap, Jev 1.14 + 10 frames twice (crowded walkway, staggered walls), CLM image
+  generic twice and the rule once on the crowded walkway. The base never came closer than 0.21 m to an obstacle.
 - **Fallback turn.** When no motion is allowed, code turns towards the side with more room, without asking the model. In
   this benchmark it never caused a fall, but kangaroo-clm's image heads fell off an edge after such a turn in its own
   benchmark: standing
@@ -487,11 +505,11 @@ the only one.
 - The Jev 1.14 run came four days after the main run, one episode at a time (perception 0.12–0.13 s per frame). Its
   three decision makers share conditions; comparisons with the first run's (Jev 1.13, CLM, the rule) cross runs. Jev's image input is experimental (TypeSafe's "danger zone" header), and the
   frames were upscaled from 424×240 to meet the API's 280 px minimum.
-- 17 episodes were restarted because the robot fell during the walking-policy handover, before the first move: 1 Jev
-  1.13, 0 Jev 1.14, 2 Jev 1.14 + frame, 5 Jev 1.14 + 10 frames, 3 CLM native, 2 CLM image nav, 4 rule. One CLM native
+- 16 episodes were restarted because the robot fell during the walking-policy handover, before the first move: 1 Jev
+  1.13, 0 Jev 1.14, 2 Jev 1.14 + frame, 5 Jev 1.14 + 10 frames, 3 CLM native, 1 CLM image generic, 4 rule. One CLM native
   episode fell twice there and was run again.
-- CLM image nav was trained on these six courses from the start poses of seeds 0–3 (kangaroo-clm's `all_courses` fold
-  holds out seeds 4 and 9), so seeds 0–3 are in-distribution for it and only seed 4 is held out. Its episodes ran
+- CLM image generic was fine-tuned on these six courses from the start poses of seeds 0–3 (kangaroo-clm's `all_courses`
+  fold holds out seeds 4 and 9), so seeds 0–3 are in-distribution for it and only seed 4 is held out. Its episodes ran
   through kangaroo-clm's own benchmark loop (`kangaroo_clm.bench`), which calls this repo's episode loop, start poses
   and metrics unchanged.
 - The CLM-native wording was chosen on 213 logged scenes against agreement with the rule and with Jev, not tuned in the
@@ -509,8 +527,9 @@ the only one.
 - **Frames.** Ask a question that only the frames can answer (an edge or obstacle the depth misses, or "has the robot
   been here in the last moves?"), instead of adding them to questions that the scene already answers.
 - **Variation.** Vary more than the start pose: course geometry, lighting, people's positions.
-- **CLM image nav.** Benchmark it on courses and start poses it has not seen (kangaroo-clm's `holdout_new` heads, or new
-  seeds) before reading its tie with the rule as a win.
+- **CLM image generic.** Run kangaroo-clm's `holdout_new` head, fine-tuned without these six courses, in this closed loop:
+  the honest test of how far the pre-training carries. Teach it to search when the cube is lost (planner labels for
+  lost-target situations, or a tracker status it acts on).
 - **CLM native.** Break the mirror symmetry of the two turns (say which turn faces the cube more directly, or keep a
   remembered turn direction in code), and fine-tune a CLM head on these questions (CLM's `train/finetune.py --task choice`).
 
@@ -524,14 +543,13 @@ docker compose run --rm kangaroo python3 -m kangaroo_systemone.bench \
   --brains jev jev@jev-1.14.0 jev_multi jev_multi_10 clm_native heuristic    # ~9 h, writes results/<run>/
 ```
 
-`jev` runs `jev-latest`, which was Jev 1.13 for the first run. CLM image nav runs through kangaroo-clm's benchmark
-(`clm_nav_m` there), with `clm-serve --state-chat --ckpt runs/gk_nav_m/all_courses/best_head.pt --model
-clm-m=runs/k_nav_m/all_courses/best_head.pt` on the host:
+`jev` runs `jev-latest`, which was Jev 1.13 for the first run. CLM image generic runs through kangaroo-clm's benchmark
+(`clm_nav` there), with `clm-serve --state-chat --ckpt runs/gk_nav_m/all_courses/best_head.pt` on the host:
 
 ```bash
 docker run --rm --network host -v $PWD:/kangaroo_systemone:ro -v <kangaroo-clm>:/kangaroo_clm:ro -v <clm-image>/src:/clm_src:ro \
   -e PYTHONPATH=/clm_src:/kangaroo_systemone:/kangaroo_clm --entrypoint /entrypoint.sh kangaroo-systemone \
-  python3 -m kangaroo_clm.bench --brains clm_nav clm_nav_m --model clm-latest --model-m clm-m --seeds 0-4 \
+  python3 -m kangaroo_clm.bench --brains clm_nav --model clm-latest --seeds 0-4 \
   --courses walkway_turn narrow_bridge pit crowded_walkway wall_gap staggered_walls
 ```
 
@@ -540,9 +558,9 @@ Comparison and figures over several runs (the first run that has a decision make
 ```bash
 docker compose run --rm kangaroo python3 -m kangaroo_systemone.bench --compare results/<run> ...
 docker compose run --rm kangaroo python3 docs/figures.py results/<run> ... --no-photos --films pit:3 wall_gap:0 narrow_bridge:0 \
-  --brains jev jev@jev-1.14.0 jev_multi jev_multi_10 clm_native clm_image_nav heuristic \
+  --brains jev jev@jev-1.14.0 jev_multi jev_multi_10 clm_native clm_image_generic heuristic \
   --labels "jev=Jev 1.13" "jev@jev-1.14.0=Jev 1.14" "jev_multi=Jev 1.14 + frame" "jev_multi_10=Jev 1.14 + 10 frames" \
-  "clm_image_nav=CLM image nav"
+  "clm_image_generic=CLM image generic"
 ```
 
 `results/<run>/summary.md` holds the tables above; each episode's `.jsonl` file holds every scene, decision and raw model
