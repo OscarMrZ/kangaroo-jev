@@ -33,16 +33,19 @@ ap.add_argument("--out", type=Path, default=Path(__file__).parent / "img")
 ap.add_argument("--films", nargs="*", default=["pit:3", "wall_gap:0"], help="course:seed episodes to film")
 ap.add_argument("--no-photos", action="store_true", help="skip the course and start-camera photos")
 ap.add_argument("--brains", nargs="+", help="plot only these decision makers (default: all in the runs)")
+ap.add_argument("--labels", nargs="+", default=[], metavar="BRAIN=LABEL", help="names to plot instead of the registry's")
 args = ap.parse_args()
 OUT = args.out
 BLUE, GREY, INK, QUIET, RULE, RED = "#2f6fdf", "#8a9099", "#1d1f23", "#6b7078", "#e4e6ea", "#d0352b"
-COLOR_WORDS = {BLUE: "blue", "#e07b22": "orange", "#2a9d6f": "green", "#c2408f": "magenta", "#6a4fc4": "purple",
-               "#8f8a1e": "olive", "#17a2b8": "teal", "#8b4513": "brown"}  # palette, in assignment order; rule: grey
+COLOR_WORDS = {BLUE: "blue", "#163d7a": "navy", "#17a2b8": "teal", "#2a9d6f": "green", "#e07b22": "orange",
+               "#8f8a1e": "olive", "#c2408f": "magenta", "#6a4fc4": "purple", "#8b4513": "brown"}
+# palette in assignment order (registry order: Jev's variants first, in cool colours); the rule is grey
 COLOR_WORDS[GREY] = "grey"
 try:
     FONT = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 34)
 except OSError:
     FONT = ImageFont.load_default(size=34)
+LABELS = dict(spec.split("=", 1) for spec in args.labels)
 RUN, rows = {}, []  # decision maker -> its run dir; its episodes
 for run in args.runs:
     for r in csv.DictReader(open(run / "episodes.csv")):
@@ -66,6 +69,10 @@ if len(models) > len(COLOR_WORDS) - 1:
 BRAINS = dict(zip(models, COLOR_WORDS))
 if any(r["brain"] == "heuristic" for r in rows):
     BRAINS["heuristic"] = GREY
+
+
+def name(brain):
+    return LABELS.get(brain) or label(brain)
 
 
 def episodes(course, brain):
@@ -164,10 +171,10 @@ def film_strip(course, seed):
             x, y, z, yaw = log[i]["pose"]
             r.place(x, y, z, yaw)
             frames.append(np.array(Image.fromarray(yolo_overlay(r.camera())).resize((424, 240))))
-            labels.append(f"{label(brain)} · move {i + 1}")
+            labels.append(f"{name(brain)} · move {i + 1}")
         end = r.overview([x, y, 0.3], distance=5.5, azimuth=math.degrees(yaw) + 200, elevation=-35)
         frames.append(np.array(Image.fromarray(end).resize((424, 240))))
-        labels.append(f"{label(brain)} · {outcome}")
+        labels.append(f"{name(brain)} · {outcome}")
         strips += list(zip(frames, labels))
     labelled_grid([f for f, _ in strips], [lab for _, lab in strips], 5, OUT / f"film_{course}.jpg", label_h=46)
 
@@ -185,7 +192,7 @@ def svg(name, width, height, body):
 
 
 def legend():
-    return ", ".join(f"{COLOR_WORDS[c]} {label(b)}" for b, c in BRAINS.items())
+    return ", ".join(f"{COLOR_WORDS[c]} {name(b)}" for b, c in BRAINS.items())
 
 
 def subtitle(t, width):
@@ -210,10 +217,10 @@ def progress_chart():
             text(0, 38, "Share of the start-to-cube distance covered at best (100% = reached); bar: mean, dots: seeds.", 12, QUIET)]
     x, ly = left, 50
     for b, color in BRAINS.items():
-        if x + 15 + 6.5 * len(label(b)) > width:  # wrap the legend
+        if x + 15 + 6.5 * len(name(b)) > width:  # wrap the legend
             x, ly = left, ly + 16
-        body += [f"<rect x='{x}' y='{ly}' width='10' height='10' fill='{color}'/>", text(x + 15, ly + 9, label(b), 11.5)]
-        x += 30 + 6.5 * len(label(b))
+        body += [f"<rect x='{x}' y='{ly}' width='10' height='10' fill='{color}'/>", text(x + 15, ly + 9, name(b), 11.5)]
+        x += 30 + 6.5 * len(name(b))
     shift = ly - 50
     height += shift
     for k in (0, 0.5, 1):
@@ -327,7 +334,7 @@ def calibration_chart():
                for c in courses for s in all_steps(c, b) if s.get("answers")]
         tight = [p for d, p in pts if d <= MARGIN["forward"]]
         roomy = [p for d, p in pts if d > MARGIN["forward"]]
-        body += [text(0, top + 18, f"{label(b)}, p(safe) for walking forward: median {np.median(tight):.2f} without "
+        body += [text(0, top + 18, f"{name(b)}, p(safe) for walking forward: median {np.median(tight):.2f} without "
                                    f"room, {np.median(roomy):.2f} with room", 15, weight=600),
                  text(0, top + 38, f"{sum(p >= 0.5 for p in tight)} of {len(tight)} decisions without room called "
                                    f"safe. One dot per decision.", 12, QUIET),
@@ -349,7 +356,7 @@ def calibration_chart():
 
 def latency_chart():
     """Seconds per decision on a log axis, one histogram per model."""
-    width, left, row = 760, 120, 60
+    width, left, row = 760, 180, 60
     models = [b for b in BRAINS if any(s.get("answers") for c in courses for s in all_steps(c, b))]
     if not models:
         return
@@ -357,16 +364,14 @@ def latency_chart():
     X = lambda v: left + (math.log10(min(max(v, 0.001), 10)) - lo) / (hi - lo) * (width - left - 20)
     edges = [10 ** (lo + i * (hi - lo) / 80) for i in range(81)]
     secs = lambda v: f"{v * 1000:.0f} ms" if v < 0.1 else f"{v:.2f} s"
-    body = [text(0, 18, "Decision latency: " + ", ".join(
-                f"{label(b)} {secs(np.median([s['latency_s'] for c in courses for s in all_steps(c, b) if s.get('answers')]))}"
-                for b in models), 15, weight=600),
-            text(0, 38, "Median of moves the model answered." + (" CLM caches embeddings: a situation it has seen "
+    body = [text(0, 18, "Decision latency", 15, weight=600),
+            text(0, 38, "Seconds per move the model answered; median after each name." + (" CLM caches embeddings: a situation it has seen "
                         "before costs a few ms." if any(b.startswith("clm") for b in models) else ""), 12, QUIET)]
     for k, b in enumerate(models):
         lat = [s["latency_s"] for c in courses for s in all_steps(c, b) if s.get("answers")]
         counts = [sum(e0 <= v < e1 for v in lat) for e0, e1 in zip(edges, edges[1:])]
         base = 60 + (k + 1) * row
-        body.append(text(left - 8, base - 4, label(b), 12, INK, "end"))
+        body.append(text(left - 8, base - 4, f"{name(b)} · {secs(np.median(lat))}", 12, INK, "end"))
         for (e0, e1), n in zip(zip(edges, edges[1:]), counts):
             h = n / max(counts) * (row - 12)
             body.append(f"<rect x='{X(e0):.1f}' y='{base - h:.1f}' width='{X(e1) - X(e0) - 1:.1f}' height='{h:.1f}' "
