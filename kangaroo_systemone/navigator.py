@@ -19,7 +19,7 @@ from rclpy.node import Node
 from rclpy.parameter import Parameter
 from sensor_msgs.msg import Image
 
-from kangaroo_systemone.brains import ACTIONS, HeuristicBrain, brain_spec, make_brain
+from kangaroo_systemone.brains import ACTIONS, MOVE_BUDGET, HeuristicBrain, brain_spec, make_brain
 from kangaroo_systemone.scenarios import SCENARIOS, clearance, start_pose
 
 GOAL_TOLERANCE = 0.9  # m from the cube centre: standing right in front of it
@@ -87,7 +87,7 @@ def goal_relative(pose, goal):
     return {"distance_m": round(math.hypot(goal[0] - x, goal[1] - y), 1), "bearing_deg": round((bearing + 180) % 360 - 180)}
 
 
-def run_episode(node, perception, brain, decisions=90, period=1.0, log=None):
+def run_episode(node, perception, brain, decisions=MOVE_BUDGET, period=1.0, log=None):
     """Drive until the goal is reached, the robot falls, or `decisions` motions are used up. The budget is in
     decisions rather than seconds, so a slower decision maker (or a loaded machine) gets the same number of moves."""
     node.wait_until(lambda: node.rgb is not None and node.pose is not None, 60, "camera and pose")
@@ -174,7 +174,7 @@ def main():
     ap.add_argument("--brain", type=brain_spec, default="jev", help="decision maker, or name@model")
     ap.add_argument("--scenario", choices=SCENARIOS, default="walkway_turn", help="the course the sim is running")
     ap.add_argument("--seed", type=int, default=0, help="the seed the sim was launched with")
-    ap.add_argument("--decisions", type=int, default=90, help="move budget per episode (1 s of motion each)")
+    ap.add_argument("--decisions", type=int, default=MOVE_BUDGET, help="move budget per episode (1 s of motion each)")
     args = ap.parse_args()
 
     from kangaroo_systemone.perception import Perception

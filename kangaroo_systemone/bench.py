@@ -21,7 +21,7 @@ from pathlib import Path
 import numpy as np
 import rclpy
 
-from kangaroo_systemone.brains import DEFAULT_BRAINS, brain_spec, make_brain
+from kangaroo_systemone.brains import DEFAULT_BRAINS, MOVE_BUDGET, brain_spec, make_brain
 from kangaroo_systemone.navigator import Navigator, run_episode, spin_in_background
 from kangaroo_systemone.scenarios import SCENARIOS
 
@@ -119,7 +119,7 @@ def main():
     ap.add_argument("--brains", nargs="+", type=brain_spec, default=DEFAULT_BRAINS, help="decision makers, or name@model")
     ap.add_argument("--scenarios", nargs="+", choices=SCENARIOS, default=list(SCENARIOS))
     ap.add_argument("--seeds", nargs="+", type=int, default=[0, 1, 2, 3, 4], help="start pose jitter; 0 = nominal")
-    ap.add_argument("--decisions", type=int, default=90, help="move budget per episode (1 s of motion each)")
+    ap.add_argument("--decisions", type=int, default=MOVE_BUDGET, help="move budget per episode (1 s of motion each)")
     ap.add_argument("--out", default="results")
     ap.add_argument("--compare", nargs="+", metavar="RUN", help="only print the summary over these runs' episodes")
     args = ap.parse_args()

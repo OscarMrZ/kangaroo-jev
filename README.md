@@ -66,12 +66,18 @@ moves (`--decisions`).
 | `clm_native` | CLM-8B, one `Choice` written for a contrastive model | the `clm` server |
 | `clm_image_native` | an image CLM on the `clm_native` question plus the frame | [kangaroo-clm](../kangaroo-clm)'s server and `clm` library |
 | `heuristic` | hand-written rule | – |
+| *Image only* | | |
+| `jev_image` | Jev 1.14 on the camera frame, the mission and its own past motions; no perception, no rules in code | `TYPESAFE_API_KEY` |
+| `jev_image_10` | the same with the last 10 frames | `TYPESAFE_API_KEY` |
+| `clm_image_only` | kangaroo-clm's mission head on the frame, the mission and its own past motions | [kangaroo-clm](../kangaroo-clm)'s server and `clm` library |
 
-All of them see the same scene, and code applies the same safety margin first; see [REPORT.md](REPORT.md#decision-design).
+The ones above *Image only* see the same scene from perception, and code applies the same safety margin first; see
+[REPORT.md](REPORT.md#decision-design). The image-only ones see no perception at all, and only the model's own answers
+decide: the motions it calls unsafe are dropped and its best-rated motion among the rest wins.
 
 ## Benchmark
 
-Run every course with every decision maker that runs from this repo alone (all but `clm_image_native`) and seeds 0–4,
+Run every course with every decision maker that runs from this repo alone (all but the `clm_image_*` ones) and seeds 0–4,
 each episode in a fresh simulation (the CLM server must be up). Narrow it with `--brains`, `--scenarios`, `--seeds`.
 
 ```bash
@@ -95,7 +101,8 @@ docker compose run --rm kangaroo python3 docs/figures.py results/<run>
   it to `BRAINS` in `kangaroo_systemone/brains.py`. It gets Jev's eight questions, the legend and, with `frames`, the
   camera frames (implement `image()`).
 - **Anything else:** subclass `Brain` and implement `__call__(scene, frame) -> Decision` (and `reset()` if it keeps
-  memory across moves); call `geometrically_safe(scene)` to stay inside the safety margin.
+  memory across moves); call `geometrically_safe(scene)` to stay inside the safety margin, or use only `frame` and
+  `scene["recent_actions"]` for an image-only one (like `JevImageBrain`).
 
 ## Layout
 

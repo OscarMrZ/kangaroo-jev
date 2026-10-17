@@ -1,4 +1,5 @@
-"""Decision makers: scene description (and camera frame) -> one of four discrete motions.
+"""Decision makers: scene description (and camera frame) -> one of four discrete motions; the image-only ones see
+the camera frame alone.
 
 A decision maker is called once per move as `brain(scene, frame)` and reset at the start of every episode. They are
 registered in BRAINS; `make_brain("name@model")` builds one with another model, e.g. `jev@jev-preview`.
@@ -24,6 +25,7 @@ ACTIONS = {
 MARGIN = {"forward": 0.8, "left": 0.5, "right": 0.5, "backward": 0.6}
 # Jev can still veto an allowed motion for reasons the numbers miss (people, odd objects).
 SEMANTIC_VETO = 0.3
+MOVE_BUDGET = 90  # motions per episode
 
 
 def geometrically_safe(scene):
@@ -157,10 +159,7 @@ class SystemOneBrain(Brain):
         # The legend rides in the state: the model reads the state once for all eight questions.
         if image is None:
             return {"legend": SCENE_GUIDE, **scene}
-        n = len(self.past)
-        # A frame history as in TypeSafe's image docs: `frames`, oldest first, each image under `frame`.
-        frames = [{"moves_ago": n - i, "frame": im, "action_after": a} for i, (im, a) in enumerate(self.past)]
-        return {"legend": SCENE_GUIDE + [FRAMES_GUIDE], **scene, "frames": frames + [{"moves_ago": 0, "frame": image}]}
+        return {"legend": SCENE_GUIDE + [FRAMES_GUIDE], **scene, "frames": self.frame_history(image)}
 
     def __call__(self, scene, frame) -> Decision:
         t0 = time.perf_counter()
@@ -173,16 +172,27 @@ class SystemOneBrain(Brain):
             a = r.answers
             safe = {m: a[f"safe_{m}"].noul for m in ACTIONS}
             progress = {m: a[f"progress_{m}"].score for m in ACTIONS}
-            allowed = [m for m in geometrically_safe(scene) if safe[m] >= SEMANTIC_VETO]
-            action = max(allowed, key=lambda m: (progress[m], safe[m])) if allowed else fallback_turn(scene)
             answers = {"safe": safe, "progress": progress,
                        "progress_confidence": {m: a[f"progress_{m}"].confidence for m in ACTIONS}}
             # CLM's input_tokens: encoder tokens actually computed (cache misses), not the size of the request
-            decision = Decision(action, time.perf_counter() - t0, answers, r.usage.input_tokens or 0)
+            decision = Decision(self.choose(scene, safe, progress), time.perf_counter() - t0, answers,
+                                r.usage.input_tokens or 0)
         if self.frames:
             self.past.append((image, decision.action))
         return decision
 
+    def choose(self, scene, safe, progress):
+        allowed = [m for m in geometrically_safe(scene) if safe[m] >= SEMANTIC_VETO]
+        return max(allowed, key=lambda m: (progress[m], safe[m])) if allowed else fallback_turn(scene)
+
+    def frame_history(self, image):
+        """A frame history as in TypeSafe's image docs: `frames`, oldest first, each image under `frame`."""
+        n = len(self.past)
+        frames = [{"moves_ago": n - i, "frame": im, "action_after": a} for i, (im, a) in enumerate(self.past)]
+        return frames + [{"moves_ago": 0, "frame": image}]
+
+
+JEV_IMAGES = "jev-1.14.0"  # the newest Jev; images are experimental ("Dreamer-ready") in 1.13 and 1.14
 
 class JevBrain(SystemOneBrain):
     """TypeSafe Jev over the TypeSafe API; with `frames`, Jev also sees the camera (experimental image input)."""
@@ -206,6 +216,18 @@ class JevBrain(SystemOneBrain):
     def request(self, state):
         return self.client.system_one(state=state, questions=self.questions, model=self.model,
                                       extra_headers={"TypeSafe-Danger-Zone-Images": "true"} if self.frames else None)
+
+
+def with_frame(state, frame):
+    """A CLM state with the camera frame as a JPEG content part (needs an image CLM's clm.content, e.g. kangaroo-clm's)."""
+    import io
+
+    from clm.content import image_part, with_images
+    from PIL import Image
+
+    buf = io.BytesIO()
+    Image.fromarray(frame).save(buf, format="JPEG", quality=92)
+    return with_images(state, [image_part(buf.getvalue(), mime="image/jpeg")])
 
 
 def clm_client():
@@ -300,16 +322,7 @@ class ClmNativeBrain(Brain):
 
     def state(self, scene, frame):
         text = situation(scene)
-        if not self.image:
-            return text
-        import io
-
-        from clm.content import image_part, with_images
-        from PIL import Image
-
-        buf = io.BytesIO()
-        Image.fromarray(frame).save(buf, format="JPEG", quality=92)
-        return with_images(text, [image_part(buf.getvalue(), mime="image/jpeg")])
+        return with_frame(text, frame) if self.image else text
 
     def __call__(self, scene, frame) -> Decision:
         t0 = time.perf_counter()
@@ -323,6 +336,124 @@ class ClmNativeBrain(Brain):
             return failed(scene, t0, e)
         p = r.answers["move"].probabilities
         return Decision(max(allowed, key=p.get), time.perf_counter() - t0, {"native": p}, r.usage.input_tokens or 0)
+
+
+# ---- Image only ---------------------------------------------------------------------------------------------
+# The model gets the camera, the mission and the robot's own motions: no perception (no depth, no YOLO, no cube
+# tracker, no odometry) and no rules in code. Only the model's own answers decide.
+
+MISSION = "Go to the red cube that stands on a grey pedestal and stop in front of it."
+IMAGE_GUIDE = [
+    "The robot is a walking two-legged robot. `frames` are images from its head camera, looking ahead and 30 degrees "
+    "down: the floor within about 0.8 m of its feet is below the image, and the camera cannot see behind. Past a "
+    "platform edge the robot falls 1.5 m; it must keep clear of people, boxes and walls.",
+    "`frames` are oldest first, one per move: the last one (`moves_ago` 0) is what the camera sees now; "
+    "`action_after` is the motion the robot made right after an earlier frame.",
+    "`recent_actions` are the previous motions, most recent last; `moves_used` counts the motions so far against "
+    "`move_budget`.",
+]
+
+
+def model_choice(safe, rating):
+    """The model's answers alone: drop the motions it calls unsafe, take its best-rated among the rest; if it calls
+    every motion unsafe, the one it rates safest."""
+    ok = [m for m in ACTIONS if safe[m] >= SEMANTIC_VETO]
+    return max(ok, key=lambda m: (rating.get(m, 0.0), safe[m])) if ok else max(ACTIONS, key=safe.get)
+
+
+def image_safety_question(motion, sdk):
+    return sdk.Noul(
+        instructions=f"Judging from the camera frames, is it safe for the robot to {MOTIONS[motion]}? "
+                     "`legend` explains the state.",
+        criteria={
+            "true": "After the motion the robot is still on the floor with room to spare (at least about 0.8 m of "
+                    "floor ahead for walking, 0.5 m for turning) and does not get close to a person, box or wall.",
+            "false": "The motion could take the robot off a platform edge or into an obstacle or person, or leaves "
+                     "it with less than that margin.",
+        },
+    )
+
+
+def image_progress_question(motion, sdk):
+    return sdk.Score(
+        instructions=f"How much would it help the robot reach the red cube to {MOTIONS[motion]}? Judge from the "
+                     "camera frames, and judge progress only, not safety. `legend` explains the state.",
+        criteria=[
+            "Hurts: leaves the robot facing a wall, an edge or an obstacle close ahead, or takes it away from the "
+            "cube with nothing gained.",
+            "Neutral: changes little; for example turning towards the cube when the way towards it is blocked close "
+            "ahead.",
+            "Helps a little: walks open floor that keeps the cube roughly ahead, or turns towards open floor that "
+            "leads round an obstacle towards the cube; with the cube out of view, turns to look for it (towards "
+            "where the frames last showed it, if they did).",
+            "Helps a lot: walks the robot closer to a cube that is roughly ahead across open floor, or turns it to "
+            "face the cube with open floor between them.",
+        ],
+    )
+
+
+class JevImageBrain(JevBrain):
+    """Jev on the camera alone: the last `frames` frames, the mission and the robot's own motions, with Jev's
+    eight-question fan-out (a safety Noul and a progress Score per motion) judged from the frames."""
+
+    def __init__(self, model=JEV_IMAGES, frames=1):
+        import typesafe_sdk
+
+        super().__init__(model, frames)
+        self.questions = {f"safe_{m}": image_safety_question(m, typesafe_sdk) for m in ACTIONS} | {
+            f"progress_{m}": image_progress_question(m, typesafe_sdk) for m in ACTIONS}
+
+    def reset(self):
+        super().reset()
+        self.moves = 0
+
+    def state(self, scene, image):
+        return {"legend": IMAGE_GUIDE, "mission": MISSION, "recent_actions": scene["recent_actions"],
+                "moves_used": self.moves, "move_budget": MOVE_BUDGET, "frames": self.frame_history(image)}
+
+    def choose(self, scene, safe, progress):
+        return model_choice(safe, progress)
+
+    def __call__(self, scene, frame) -> Decision:
+        decision = super().__call__(scene, frame)
+        self.moves += 1
+        return decision
+
+
+class ClmMissionImageBrain(Brain):
+    """kangaroo-clm's mission head (serve CLM image generic, G2+K_m) on the camera alone: the head's trained state
+    and questions (`kangaroo_clm.mission`) without what was sensed, i.e. no `target` (colour detection and odometry)
+    and no "stuck" flag (odometry). Needs kangaroo-clm and its clm library on the path, and its clm-serve."""
+
+    def __init__(self, model="clm-latest"):
+        from kangaroo_clm import mission
+
+        self.mission, self.client, self.model, self.questions = mission, clm_client(), model, mission.questions()
+        self.reset()
+
+    def reset(self):
+        # Without a target the tracker keeps only the mission, the status flags of the robot's own motions and
+        # the motions themselves; nothing calls observe(), so the odometry-based "stuck" flag never fires.
+        self.tracker = self.mission.Tracker(self.mission.Mission("red_cube", MISSION, None, target=None))
+
+    def state(self):
+        state = self.tracker.state(in_view=False)
+        state["legend"] = [line for line in state["legend"] if not line.startswith("`target`")]
+        return state
+
+    def __call__(self, scene, frame) -> Decision:
+        t0 = time.perf_counter()
+        try:
+            r = self.client.system_one(with_frame(self.state(), frame), self.questions, model=self.model)
+        except Exception as e:
+            decision = failed(scene, t0, e)
+        else:
+            safe = {m: r.answers[f"safe_{m}"].noul for m in ACTIONS}
+            p = r.answers["action"].probabilities
+            decision = Decision(model_choice(safe, p), time.perf_counter() - t0, {"safe": safe, "action": p},
+                                r.usage.input_tokens or 0)
+        self.tracker.act(decision.action)
+        return decision
 
 
 class HeuristicBrain(Brain):
@@ -343,8 +474,6 @@ class HeuristicBrain(Brain):
         return Decision(next((m for m in preferred if m in safe), fallback_turn(scene)))
 
 
-JEV_IMAGES = "jev-1.14.0"  # the newest Jev; images are experimental ("Dreamer-ready") in 1.13 and 1.14
-
 # name: (label for reports, factory taking an optional model).
 BRAINS = {
     "jev": ("Jev", JevBrain),
@@ -353,10 +482,13 @@ BRAINS = {
     "clm": ("CLM naive", ClmBrain),
     "clm_native": ("CLM native", ClmNativeBrain),
     "clm_image_native": ("CLM image native", partial(ClmNativeBrain, image=True)),
+    "jev_image": ("Jev, image only", JevImageBrain),
+    "jev_image_10": ("Jev, image only, 10 frames", partial(JevImageBrain, frames=10)),
+    "clm_image_only": ("CLM mission head, image only", ClmMissionImageBrain),
     "heuristic": ("rule", HeuristicBrain),
 }
-# Everything that runs from this repo alone (clm_image_native needs kangaroo-clm's image server and clm library).
-DEFAULT_BRAINS = ["jev", "jev_multi", "jev_multi_10", "clm", "clm_native", "heuristic"]
+# Everything that runs from this repo alone (the clm_image_* ones need kangaroo-clm's image server and clm library).
+DEFAULT_BRAINS = ["jev", "jev_multi", "jev_multi_10", "jev_image", "jev_image_10", "clm", "clm_native", "heuristic"]
 
 
 def brain_spec(spec):
