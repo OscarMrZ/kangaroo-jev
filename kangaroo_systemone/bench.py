@@ -68,7 +68,9 @@ def run_in_fresh_sim(scenario, seed, brain, perception, decisions, prefix):
 
 
 def summarize(rows, brains):
-    """Per course and decision maker over seeds, then every pair of decision makers by (course, seed)."""
+    """Per course and decision maker over seeds, then every pair of decision makers by (course, seed). Episodes
+    that never got a move (an error, or a fall during the policy handover) are left out."""
+    rows = [r for r in rows if "time_s" in r and r.get("decisions")]
     fmt = lambda vs, p=2: f"{np.mean(vs):.{p}f} ± {np.std(vs):.{p}f}" if vs else "-"
     lines = ["| course | brain | episodes | reached | fell | collided | progress | turn share | reversals |",
              "|---|---|---|---|---|---|---|---|---|"]
@@ -139,7 +141,7 @@ def main():
     for seed in args.seeds:
         for scenario in args.scenarios:
             for name, brain in brains.items():
-                for attempt in range(2):  # retry once if the robot falls during the policy handover, before driving
+                for attempt in range(3):  # retry if the robot falls during the policy handover, before driving
                     print(f"[bench] {scenario} / {name} / seed {seed}" +
                           (" (retry: fell before the first decision)" if attempt else ""), flush=True)
                     result = run_in_fresh_sim(scenario, seed, brain, perception, args.decisions,
@@ -153,7 +155,7 @@ def main():
                     w = csv.DictWriter(f, list(dict.fromkeys(k for r in rows for k in r)))
                     w.writeheader()
                     w.writerows(rows)
-    (out / "summary.md").write_text(summarize([r for r in rows if "time_s" in r], args.brains))
+    (out / "summary.md").write_text(summarize(rows, args.brains))
     print((out / "summary.md").read_text())
     rclpy.shutdown()
 

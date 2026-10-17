@@ -1,6 +1,7 @@
 # Kangaroo × System One models: reactive navigation
 
-Exploratory report · October 2026 · 210 episodes (6 courses × 7 decision makers × 5 seeds)
+Exploratory report · October 2026 · 300 episodes: A. with perception, 210 (6 courses × 7 decision makers × 5 seeds);
+B. image only, 90 (6 courses × 3 decision makers × 5 seeds)
 
 ![The six courses](docs/img/courses.jpg)
 
@@ -18,7 +19,7 @@ Exploratory report · October 2026 · 210 episodes (6 courses × 7 decision make
   - **CLM image generic**: [kangaroo-clm](../kangaroo-clm)'s image CLM head, pre-trained on public scene and
     people-navigation data, then fine-tuned on robot decisions labelled by a planner; with its own state and questions.
   - A hand-written **rule**.
-- **Result.** Three falls in 210 episodes, all by Jev with camera frames.
+- **Result, A: with perception.** Three falls in 210 episodes, all by Jev with camera frames.
 
   | | Decision maker | progress, mean ± sd | cube reached | fell | decision latency, median |
   | --- | --- | --- | --- | --- | --- |
@@ -38,8 +39,21 @@ Exploratory report · October 2026 · 210 episodes (6 courses × 7 decision make
   - **CLM native** reaches 38%, 11 pp behind Jev 1.13 (CI +1 to +21). Asked Jev's questions unchanged, CLM-8B made 8%.
   - **CLM image generic** is level with the rule (+3 pp, CI −7 to +13) and with Jev 1.13. It was fine-tuned on these six
     courses, from the start poses of seeds 0–3; on the held-out seed 4 it makes 50%, against the rule's 55% and Jev 1.14's
-    58%. Its pre-training carries over: on ten courses it never saw, the head already picks the planner's motion 55% of
-    the time before any robot data, 58% after.
+    58%. Its pre-training carries over: on kangaroo-clm's ten other courses (five share a layout with ours, with another
+    target), the head already picks the planner's motion 55% of the time before any robot data, 58% after.
+- **Result, B: image only** (see [B. Image only](#b-image-only)). The same models with only the camera, the mission and
+  their own past motions, no perception, and nothing in code but their own answers:
+
+  | Image only | progress, mean ± sd | cube reached | fell | the same model with perception |
+  | --- | --- | --- | --- | --- |
+  | Jev 1.14, 1 frame | 34 ± 21% | 0 / 30 | 17 | 53%, 7 reached, 1 fell |
+  | Jev 1.14, 10 frames | 43 ± 15% | 0 / 30 | 20 | 47%, 3 reached, 2 fell |
+  | CLM image generic | 45 ± 8% | 0 / 30 | 16 | 51%, 4 reached, 0 fell |
+
+  - **No cube reached, and every episode on a raised course ended off an edge** (45 of 45).
+  - **Their safety answers do not see edges in the frames.** Jev's p(safe) for stepping forward is about 0.5 whether or
+    not there is floor ahead; CLM's is about 0.85.
+  - **Progress is mostly walking straight at the cube:** CLM walked forward on every move but one and made 45%.
 - **Lessons.**
   1. Safety has to be split from progress. A single "pick the action" question let Jev walk off every raised edge. A safety
      `Noul` and a progress `Score` per motion, with the margin enforced in code, removed the falls.
@@ -58,7 +72,9 @@ Exploratory report · October 2026 · 210 episodes (6 courses × 7 decision make
   6. Images are not free information. Jev 1.14's camera frames made it more cautious and did not stop the dithering; a
      history of frames without a question that uses it adds tokens and latency, not memory. The newer model on the
      unchanged text request gained more than any added input.
-  7. One episode per course is not enough. An earlier single-seed run had Jev ahead of the rule, 47% vs 33%; across five
+  7. Today's System One models do not see where the floor ends. From the camera alone, neither model's safety answer
+     separates an edge from open floor; the measured margin in code is what kept part A's robots on the deck.
+  8. One episode per course is not enough. An earlier single-seed run had Jev ahead of the rule, 47% vs 33%; across five
      seeds that gap disappears.
 
 ## Setup
@@ -83,7 +99,8 @@ flowchart LR
 ## Decision makers
 
 All seven get the same scene from perception, and code applies the same geometric veto (a motion needs measured room),
-so only the choice among the allowed motions differs. The registry name to run each with `bench --brains` is in brackets.
+so only the choice among the allowed motions differs. [Part B](#b-image-only) adds three image-only decision makers, with
+no perception and no margin in code. The registry name to run each with `bench --brains` is in brackets.
 Jev without a version, in the sections on the first run, is Jev 1.13.
 
 | Name | Model | Questions per move | Runs on |
@@ -105,6 +122,7 @@ Jev without a version, in the sections on the first run, is Jev 1.13.
 
 **Episodes.** 6 courses × 7 decision makers × 5 seeds = 210 episodes, each in a fresh simulation, in two runs: Jev 1.13,
 CLM native, CLM image generic and the rule first; the three Jev 1.14 decision makers four days later, on the same starts.
+Part B's 90 image-only episodes are a third run, on the same starts.
 
 - **Seed:** jitters the start pose by up to ±0.1 m forward, ±0.15 m sideways and ±6° of heading; seed 0 is the nominal
   start, and the cube stays in view at every start. The simulation is not deterministic either (ROS timing), so the same
@@ -227,7 +245,7 @@ trained on these questions, labelled by a planner that sees the true layout and 
 | kangaroo-clm's image heads, own mission questions | same | 51% (pre-trained, then fine-tuned) and 54% (robot data only). |
 | Jev 1.14; Jev 1.14 with camera frames | same | 58%; 53% with one frame, 47% with ten. |
 
-## Results
+## A. Results with perception
 
 ### All decision makers
 
@@ -301,7 +319,7 @@ Progress is the mean ± sd over 5 seeds. Paired differences in progress over the
   off where the open way bends round an obstacle towards the cube, as on the pit (+19 pp) and staggered walls (+15 pp).
 - **The rule's stubbornness pays off at the wall gap** (−21 pp). "Keep walking where it is open" carries it along the
   wall to the gap on 2 of 5 seeds. Jev either turns back towards the cube behind the wall or, once it has lost the cube,
-  walks away (see [Failure modes](#failure-modes)); it never gets through.
+  walks away (see [Failure modes](#a-failure-modes)); it never gets through.
 
 Best case for Jev, the pit (seed 3): Jev 1.13 walks round the hole and reaches the cube in 68 moves; so do Jev 1.14 (62),
 Jev 1.14 + frame (45) and Jev 1.14 + 10 frames (64). CLM image generic runs out of moves, CLM native turns back and forth
@@ -427,8 +445,9 @@ a left-turning bias. The state carries the frame, the mission and a tracker inst
 - **Its fine-tuning saw these courses.** The robot episodes come from these six courses (and ten more), from the start
   poses of seeds 0–3; only seed 4 was held out. On seed 4 it makes 50% (no cube) against Jev 1.13's 57% (1), Jev 1.14's
   58% (1) and the rule's 55% (2), on 6 episodes each.
-- **The pre-training carries over.** In kangaroo-clm's offline test on ten courses it never trained on (`holdout_new`
-  fold), the pre-trained head picks the planner's motion 55% of the time before any robot data and 58% after fine-tuning,
+- **The pre-training carries over.** kangaroo-clm's `holdout_new` fold fine-tunes on these six courses and tests offline
+  on its ten other courses (five of them share a layout with ours, with another target). There the pre-trained head picks
+  the planner's motion 55% of the time before any robot data and 58% after fine-tuning,
   level with a head trained on robot data alone (58%, which starts from nothing). It also keeps its general skills: 68%
   on public scene questions and 69% on navigation evaluations after fine-tuning.
 - **Against the robot-only head.** kangaroo-clm's K-nav_m, the same recipe without pre-training or replay, made 54% here
@@ -437,7 +456,7 @@ a left-turning bias. The state carries the frame, the mission and a tracker inst
 - **It grazes.** Two grazes on the crowded walkway, up to 0.09 m inside the 0.3 m footprint margin. No falls.
 - **It answers in 0.13 s** with the frame, on the same 16 GB card.
 
-## Model judgments
+## A. Model judgments
 
 ![Safety calibration](docs/img/calibration.svg)
 
@@ -462,7 +481,7 @@ the only one.
 - **CLM image generic:** 0.13 s median with the frame (5 questions per move), on the same card. No errors in 2,662
   requests; it chose the rule's motion on 57% of moves.
 
-## Failure modes
+## A. Failure modes
 
 - **Dithering (all).** Turns are 63–82% of all moves, with 18–30 left–right reversals per episode. Near a wall or an
   edge the veto blocks forward, each turn looks best on its own, and nothing records which side was already tried. CLM
@@ -491,6 +510,124 @@ the only one.
 - **YOLO false positives.** It labels the deck "bed" and a wall end "umbrella" in some frames, and these labels go to Jev
   unchanged. Distances come from depth, so a wrong label can only sway the models' judgments, not the veto.
 
+## B. Image only
+
+Part A gave every decision maker perception's scene: distances measured with depth, YOLO's objects, the cube's position
+and memory, and a safety margin enforced in code. Part B takes all of that away. The models get the head camera and
+nothing measured, and nothing in code protects the robot. The question is whether the models themselves can see where
+it is safe to walk.
+
+### Setup
+
+Three decision makers, each compared with the same model in part A:
+
+| Image only (registry name) | The same model in part A |
+| --- | --- |
+| **Jev 1.14, 1 frame** (`jev_image`) | Jev 1.14 + frame |
+| **Jev 1.14, 10 frames** (`jev_image_10`) | Jev 1.14 + 10 frames |
+| **CLM image generic, image only** (`clm_image_only`) | CLM image generic |
+
+**What the models get:** the camera frames, the mission, and the robot's own past motions. There is no depth, no YOLO, no
+colour detector, no odometry and no remembered cube. Jev 1.14 gets this state, with 1 frame or the last 10:
+
+```json
+{
+  "legend": ["The robot is a walking two-legged robot. `frames` are images from its head camera, looking ahead and 30 degrees down: the floor within about 0.8 m of its feet is below the image, and the camera cannot see behind. Past a platform edge the robot falls 1.5 m; it must keep clear of people, boxes and walls.",
+             "`frames` are oldest first, one per move: the last one (`moves_ago` 0) is what the camera sees now; `action_after` is the motion the robot made right after an earlier frame.",
+             "`recent_actions` are the previous motions, most recent last; `moves_used` counts the motions so far against `move_budget`."],
+  "mission": "Go to the red cube that stands on a grey pedestal and stop in front of it.",
+  "recent_actions": ["left", "left", "forward"],
+  "moves_used": 23,
+  "move_budget": 90,
+  "frames": [{"moves_ago": 1, "frame": "<image>", "action_after": "forward"}, {"moves_ago": 0, "frame": "<image>"}]
+}
+```
+
+- **Jev's questions:** Jev's eight, judged from the frames. For each motion, a safety `Noul` ("Judging from the camera
+  frames, is it safe for the robot to …?") and a progress `Score`. The progress score has one more line: with the cube
+  out of view, turning to look for it helps.
+- **CLM image generic:** its own trained state and questions (an action `Choice` and four safety `Noul`s), without what
+  was sensed. The `target` line goes, since it came from a colour detector and odometry, and so does the "stuck" flag,
+  from odometry. Its dithering, turning-streak and budget flags stay, since they come from its own motions. It gets the
+  424×240 frame it was trained on.
+
+**Policy: only the models' own answers.**
+- A motion the model itself calls unsafe (p < 0.3) is dropped.
+- Its best-rated motion among the rest wins: Jev's highest progress score, CLM's most probable motion.
+- If it calls every motion unsafe, the one it rates safest wins.
+- There is no geometric veto, no backward rule and no fallback turn. Perception still runs, only to log what depth
+  measured for scoring; the models never see it.
+
+**Episodes:** 6 courses × 3 decision makers × 5 seeds = 90, in a third run, one at a time, on the same starts as part A.
+
+### Results
+
+| | Decision maker | progress, mean ± sd | reached | fell | grazed or hit an obstacle | moves: forward / turns / backward | decision latency, median | input tokens per decision |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| **Image only** | Jev 1.14, 1 frame | 34 ± 21% | 0 / 30 | 17 | 5 | 41% / 59% / 0.5% | 0.28 s | 2,320 |
+| | Jev 1.14, 10 frames | 43 ± 15% | 0 / 30 | 20 | 11 | 61% / 38% / 1% | 0.48 s | 4,800 |
+| | CLM image generic | 45 ± 8% | 0 / 30 | 16 | 15 | 99.9% / 0.1% / 0% | 0.12 s | 1,570 |
+| **With perception (A)** | Jev 1.14 + frame | 53 ± 30% | 7 / 30 | 1 | 0 | 22% / 71% / 7% | 0.25 s | 2,790 |
+| | Jev 1.14 + 10 frames | 47 ± 25% | 3 / 30 | 2 | 2 | 22% / 72% / 6% | 0.34 s | 6,320 |
+| | CLM image generic | 51 ± 28% | 4 / 30 | 0 | 2 | 44% / 55% / 1% | 0.13 s | 1,980 |
+
+Ten frames average fewer tokens than in part A because most episodes ended in a fall before ten frames had built up.
+
+| Course | Jev 1.14, 1 frame | Jev 1.14, 10 frames | CLM image generic |
+| --- | --- | --- | --- |
+| walkway turn | 19%, fell 5 of 5 | 20%, fell 5 of 5 | 55%, fell 5 of 5 |
+| narrow bridge | 47%, fell 5 of 5 | 42%, fell 5 of 5 | 39%, fell 5 of 5 |
+| pit | 52%, fell 5 of 5 | 51%, fell 5 of 5 | 46%, fell 5 of 5 |
+| crowded walkway | 21%, fell 2 | 46%, fell 2 | 38%, fell 1 |
+| wall gap | 56% | 56%, fell 1 | 56% |
+| staggered walls | 8% | 41%, fell 2 | 36% |
+
+![Progress per course, image only](docs/img/image_only/progress.svg)
+
+![Paths, image only](docs/img/image_only/paths.svg)
+
+- **No cube reached, and every raised course ends in a fall.**
+  - All 45 episodes on the walkway turn, narrow bridge and pit end off an edge, after a median of 7 moves.
+  - Over all six courses: 53 falls in 90 episodes. With perception, the same three models fell 3 times in 90.
+- **Progress here mostly measures walking straight at the cube.**
+  - Every start faces the cube. Walking forward until the floor ends or a wall stops the robot covers 40–56% of the way
+    on most courses.
+  - CLM image generic walked forward on 1,418 of its 1,419 moves and made 45%: that is what a robot that only walks
+    forward makes here.
+  - Jev with one frame made less (34%), with ten frames about the same (43%). Falls and cubes are the measure here,
+    not progress.
+  - Paired against part A, progress drops by 19 pp with one frame (95% CI −30 to −7), 4 pp with ten (CI −16 to +7)
+    and 6 pp for CLM (CI −15 to +2). Those drops hide the falls.
+- **The safety answers no longer see the edge.**
+  - Median p(safe) for walking forward, without measured room / with room: Jev 1 frame 0.54 / 0.57, Jev 10 frames
+    0.47 / 0.53, CLM 0.83 / 0.86. With perception, Jev 1.14 + frame gave 0.27 / 0.85.
+  - Measured by the depth the models never saw, the chosen motion had no room in 36% (1 frame), 65% (10 frames) and 88%
+    (CLM) of moves. In part A that happened in 3–11% of moves, all of them fallback turns when nothing was allowed.
+  - Jev's p(safe) for an edge right in front stays near 0.5: it neither trusts the step nor rules it out, and 0.5 is
+    above the 0.3 at which a motion is dropped.
+- **CLM image generic drives on its text, not on the image.**
+  - Without the tracker's line about where the cube is, its action `Choice` picks forward on every move, whatever the
+    frame shows. In part A the same head turned on 55% of moves.
+  - So its turning came from the text tracker, not from the frame.
+  - It walks off every edge, and into whatever stands in front in all 15 episodes on the three courses with obstacles
+    (walls, people, a box): the base within 0.05 m of it, and once it fell over against one.
+- **Jev with one frame searches but cannot see where the floor ends.**
+  - It turns on 59% of moves; with the cube out of view it turns to look for it (377 of 437 such moves).
+  - On the staggered walls it turned away from the cube and had it out of view on 74–90% of moves on every seed (8%),
+    ending more than 9 m from it on three.
+- **Ten frames: more walking, more falls.**
+  - With ten frames Jev walks forward more (61% of moves against 41%) and dithers less (5.8 left–right reversals per
+    episode against 13.6).
+  - It gets further on the crowded walkway and the staggered walls (+25 and +33 pp).
+  - But it hits an obstacle in 11 episodes, and fell over against a wall three times on the wall courses.
+
+![Safety calibration, image only](docs/img/image_only/calibration.svg)
+
+Walkway turn, seed 0: all three walk to the end of the walkway and step off it; the rule, with perception, follows the
+walkway round the bend. These are the raw camera frames, as the models saw them, without YOLO's masks:
+
+![Walkway turn, image only](docs/img/image_only/film_walkway_turn.jpg)
+
 ## Limitations
 
 - Five seeds per course and decision maker, and the seed only jitters the start pose. Per-course spreads are wide (up to
@@ -512,6 +649,14 @@ the only one.
   fold holds out seeds 4 and 9), so seeds 0–3 are in-distribution for it and only seed 4 is held out. Its episodes ran
   through kangaroo-clm's own benchmark loop (`kangaroo_clm.bench`), which calls this repo's episode loop, start poses
   and metrics unchanged.
+- Part B (image only) came the same day as the Jev 1.14 run, one episode at a time. 17 of its episodes were restarted
+  after a fall during the walking-policy handover (6 Jev 1.14 with 1 frame, 4 with 10 frames, 7 CLM); one of them (pit,
+  10 frames, seed 4) fell there twice and was run again on its own.
+- Part B's questions for Jev were written for this run and not tuned. CLM image generic was asked its trained questions
+  without two fields it was trained with (`target`, "stuck"), so part of its change is a change of format, not only the
+  lost perception.
+- The head camera is tilted 30° down and never sees the floor within about 0.8 m of the feet. Perception remembers what
+  it saw for 20 s; an image-only model has only the frames it is given (one, or the last ten).
 - The CLM-native wording was chosen on 213 logged scenes against agreement with the rule and with Jev, not tuned in the
   closed loop. Its word bands are coarse by design; finer bands would separate the turns better but do more of the
   reasoning in code.
@@ -527,9 +672,13 @@ the only one.
 - **Frames.** Ask a question that only the frames can answer (an edge or obstacle the depth misses, or "has the robot
   been here in the last moves?"), instead of adding them to questions that the scene already answers.
 - **Variation.** Vary more than the start pose: course geometry, lighting, people's positions.
-- **CLM image generic.** Run kangaroo-clm's `holdout_new` head, fine-tuned without these six courses, in this closed loop:
-  the honest test of how far the pre-training carries. Teach it to search when the cube is lost (planner labels for
-  lost-target situations, or a tracker status it acts on).
+- **CLM image generic.** Fine-tune a head without these six courses *and* their layout twins in kangaroo-clm
+  (`pit_blue`, `gap_through`, `staggered_person`, `bridge_blue`; its `holdout_new` fold does the opposite and trains on
+  these six), and run it here: the honest test of how far the pre-training carries. Teach it to search when the cube is
+  lost (planner labels for lost-target situations, or a tracker status it acts on).
+- **Image-only safety.** Neither model tells an edge from open floor in the frames. Before an image-only robot drives
+  without a measured margin, a safety judgment has to pass offline on logged frames labelled by depth (the episode logs
+  here have both). A depth image as a second frame is the obvious input to try.
 - **CLM native.** Break the mirror symmetry of the two turns (say which turn faces the cube more directly, or keep a
   remembered turn direction in code), and fine-tune a CLM head on these questions (CLM's `train/finetune.py --task choice`).
 
@@ -563,6 +712,18 @@ docker compose run --rm kangaroo python3 docs/figures.py results/<run> ... --no-
   "clm_image_generic=CLM image generic"
 ```
 
+Part B, image only (CLM image generic needs kangaroo-clm's encoder and `clm-serve --port 8700 --state-chat --ckpt
+runs/gk_nav_m/all_courses/best_head.pt` on the host, and its `clm` library on the path):
+
+```bash
+docker compose run --rm -v <kangaroo-clm>:/kangaroo_clm:ro -v <clm-image>/src:/clm_src:ro \
+  -e PYTHONPATH=/clm_src:/kangaroo_systemone:/kangaroo_clm -e CLM_BASE_URL=http://127.0.0.1:8700 kangaroo \
+  python3 -m kangaroo_systemone.bench --brains jev_image jev_image_10 clm_image_only
+docker compose run --rm kangaroo python3 docs/figures.py results/<run> results/<first run> --out docs/img/image_only \
+  --no-photos --raw-films --films walkway_turn:0 --brains jev_image jev_image_10 clm_image_only heuristic \
+  --labels "jev_image=Jev 1.14, 1 frame" "jev_image_10=Jev 1.14, 10 frames" "clm_image_only=CLM image generic"
+```
+
 `results/<run>/summary.md` holds the tables above; each episode's `.jsonl` file holds every scene, decision and raw model
 answer.
 
@@ -586,7 +747,8 @@ Upstream code is pinned and not modified; `kangaroo_systemone/sim_setup.py` adap
 - **CLM.** The `clm` service runs vLLM (Qwen3-8B, last-token pooling, bf16) and `clm-serve`, pinned to CLM commit
   `d5f9ef0`. `kangaroo_systemone/brains.py` builds Jev's questions with either SDK's `Noul` and `Score`, so any
   TypeSafe-compatible endpoint can answer them; `ClmNativeBrain` holds the CLM-native questions. Every decision maker
-  is called with the scene and the camera frame.
+  is called with the scene and the camera frame. `ClmMissionImageBrain` (`clm_image_only`) imports kangaroo-clm's
+  `mission` module, so the image-only CLM gets its trained questions and state wording, minus the sensed fields.
 - **Jev images.** `typesafe-sdk[pil]` 0.7.5 uploads `Image` objects found anywhere in the state; frame requests add the
   `TypeSafe-Danger-Zone-Images: true` header.
 - **Perception.** The floor plane is fitted to the bottom of every frame. Without the fit, a few degrees of torso pitch

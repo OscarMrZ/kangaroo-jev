@@ -32,6 +32,7 @@ ap.add_argument("runs", nargs="+", type=Path, help="results/<run> ...")
 ap.add_argument("--out", type=Path, default=Path(__file__).parent / "img")
 ap.add_argument("--films", nargs="*", default=["pit:3", "wall_gap:0"], help="course:seed episodes to film")
 ap.add_argument("--no-photos", action="store_true", help="skip the course and start-camera photos")
+ap.add_argument("--raw-films", action="store_true", help="film the camera frames without YOLO's masks")
 ap.add_argument("--brains", nargs="+", help="plot only these decision makers (default: all in the runs)")
 ap.add_argument("--labels", nargs="+", default=[], metavar="BRAIN=LABEL", help="names to plot instead of the registry's")
 args = ap.parse_args()
@@ -170,7 +171,8 @@ def film_strip(course, seed):
         for i in picks:
             x, y, z, yaw = log[i]["pose"]
             r.place(x, y, z, yaw)
-            frames.append(np.array(Image.fromarray(yolo_overlay(r.camera())).resize((424, 240))))
+            rgb = r.camera()
+            frames.append(np.array(Image.fromarray(rgb if args.raw_films else yolo_overlay(rgb)).resize((424, 240))))
             labels.append(f"{name(brain)} · move {i + 1}")
         end = r.overview([x, y, 0.3], distance=5.5, azimuth=math.degrees(yaw) + 200, elevation=-35)
         frames.append(np.array(Image.fromarray(end).resize((424, 240))))
