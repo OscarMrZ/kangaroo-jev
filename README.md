@@ -60,7 +60,7 @@ moves (`--decisions`).
 | Name | What decides | Needs |
 | --- | --- | --- |
 | `jev` | TypeSafe Jev: a safety `Noul` and a progress `Score` per motion, over perception's scene description | `TYPESAFE_API_KEY` |
-| `jev_multi` | the same, with the current head-camera frame in the state | `TYPESAFE_API_KEY` |
+| `jev_multi` | the same on Jev 1.14, with the current head-camera frame in the state (experimental image input) | `TYPESAFE_API_KEY` |
 | `jev_multi_10` | the same, with the last 10 frames (one per move) and the move made after each | `TYPESAFE_API_KEY` |
 | `clm` | CLM-8B on Jev's questions | the `clm` server |
 | `clm_native` | CLM-8B, one `Choice` written for a contrastive model | the `clm` server |

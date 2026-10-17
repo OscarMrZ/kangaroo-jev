@@ -158,8 +158,9 @@ class SystemOneBrain(Brain):
         if image is None:
             return {"legend": SCENE_GUIDE, **scene}
         n = len(self.past)
-        frames = [{"moves_ago": n - i, "image": im, "action_after": a} for i, (im, a) in enumerate(self.past)]
-        return {"legend": SCENE_GUIDE + [FRAMES_GUIDE], **scene, "frames": frames + [{"moves_ago": 0, "image": image}]}
+        # A frame history as in TypeSafe's image docs: `frames`, oldest first, each image under `frame`.
+        frames = [{"moves_ago": n - i, "frame": im, "action_after": a} for i, (im, a) in enumerate(self.past)]
+        return {"legend": SCENE_GUIDE + [FRAMES_GUIDE], **scene, "frames": frames + [{"moves_ago": 0, "frame": image}]}
 
     def __call__(self, scene, frame) -> Decision:
         t0 = time.perf_counter()
@@ -342,11 +343,13 @@ class HeuristicBrain(Brain):
         return Decision(next((m for m in preferred if m in safe), fallback_turn(scene)))
 
 
+JEV_IMAGES = "jev-1.14.0"  # the newest Jev; images are experimental ("Dreamer-ready") in 1.13 and 1.14
+
 # name: (label for reports, factory taking an optional model).
 BRAINS = {
     "jev": ("Jev", JevBrain),
-    "jev_multi": ("Jev multi", partial(JevBrain, frames=1)),
-    "jev_multi_10": ("Jev multi, 10 frames", partial(JevBrain, frames=10)),
+    "jev_multi": ("Jev multi", partial(JevBrain, model=JEV_IMAGES, frames=1)),
+    "jev_multi_10": ("Jev multi, 10 frames", partial(JevBrain, model=JEV_IMAGES, frames=10)),
     "clm": ("CLM naive", ClmBrain),
     "clm_native": ("CLM native", ClmNativeBrain),
     "clm_image_native": ("CLM image native", partial(ClmNativeBrain, image=True)),
