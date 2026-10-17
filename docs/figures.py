@@ -1,6 +1,9 @@
 """Figures for REPORT.md from a benchmark results dir. Runs in the container:
 
-    docker compose run --rm kangaroo python3 docs/figures.py results/<run> [--out docs/img] [--films pit:3 wall_gap:0]
+    docker compose run --rm kangaroo python3 docs/figures.py results/<run> [results/<other run> ...] [--out docs/img] \
+        [--films pit:3 wall_gap:0]
+
+With several runs, each decision maker comes from the first run that has it.
 
 Writes to --out: course and camera photos (offline MuJoCo renders of the benchmark scenes at the nominal start; skip
 with --no-photos), film strips of the given episodes (re-rendered from their logged base poses, joints at the start
@@ -24,12 +27,12 @@ from kangaroo_systemone.brains import MARGIN, label  # noqa: E402
 from kangaroo_systemone.scenarios import SCENARIOS  # noqa: E402
 
 ap = argparse.ArgumentParser()
-ap.add_argument("run", type=Path, help="results/<run>")
+ap.add_argument("runs", nargs="+", type=Path, help="results/<run> ...")
 ap.add_argument("--out", type=Path, default=Path(__file__).parent / "img")
 ap.add_argument("--films", nargs="*", default=["pit:3", "wall_gap:0"], help="course:seed episodes to film")
 ap.add_argument("--no-photos", action="store_true", help="skip the course and start-camera photos")
 args = ap.parse_args()
-RUN, OUT = args.run, args.out
+OUT = args.out
 BLUE, GREY, INK, QUIET, RULE, RED = "#2f6fdf", "#8a9099", "#1d1f23", "#6b7078", "#e4e6ea", "#d0352b"
 COLOR_WORDS = {BLUE: "blue", "#e07b22": "orange", "#2a9d6f": "green", "#c2408f": "magenta", "#6a4fc4": "purple",
                "#8f8a1e": "olive", "#17a2b8": "teal", "#8b4513": "brown"}  # palette, in assignment order; rule: grey
@@ -38,7 +41,11 @@ try:
     FONT = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 34)
 except OSError:
     FONT = ImageFont.load_default(size=34)
-rows = [r for r in csv.DictReader(open(RUN / "episodes.csv")) if r.get("progress")]
+RUN, rows = {}, []  # decision maker -> its run dir; its episodes
+for run in args.runs:
+    for r in csv.DictReader(open(run / "episodes.csv")):
+        if RUN.setdefault(r["brain"], run) == run and r.get("progress"):
+            rows.append(r)
 courses = [c for c in SCENARIOS if any(r["scenario"] == c for r in rows)]
 seeds = sorted({int(r["seed"]) for r in rows})
 
@@ -61,7 +68,7 @@ def episodes(course, brain):
 
 
 def steps(course, brain, seed):
-    f = RUN / f"{course}_{brain}_s{seed}.jsonl"
+    f = RUN[brain] / f"{course}_{brain}_s{seed}.jsonl"
     return [json.loads(line) for line in open(f)] if f.exists() else []
 
 

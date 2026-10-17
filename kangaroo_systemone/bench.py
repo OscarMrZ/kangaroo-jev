@@ -3,9 +3,11 @@
 python3 -m kangaroo_systemone.bench                                   # every course, DEFAULT_BRAINS, seeds 0-4
 python3 -m kangaroo_systemone.bench --brains heuristic --scenarios pit --seeds 0
 python3 -m kangaroo_systemone.bench --brains jev jev@jev-preview      # a decision maker with another model
+python3 -m kangaroo_systemone.bench --compare results/<new> results/<baseline>   # summary over runs, paired by (course, seed)
 """
 
 import argparse
+import ast
 import csv
 import itertools
 import json
@@ -101,6 +103,17 @@ def summarize(rows, brains):
     return "\n".join(lines) + "\n"
 
 
+def load_rows(runs):
+    """Episodes of several runs; a decision maker comes from the first run that has it."""
+    rows, owner = [], {}
+    for run in runs:
+        for r in csv.DictReader(open(Path(run) / "episodes.csv")):
+            if owner.setdefault(r["brain"], run) == run:
+                rows.append({k: v if k in ("scenario", "brain", "outcome") else ast.literal_eval(v) if v else None
+                             for k, v in r.items()})
+    return rows
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--brains", nargs="+", type=brain_spec, default=DEFAULT_BRAINS, help="decision makers, or name@model")
@@ -108,7 +121,12 @@ def main():
     ap.add_argument("--seeds", nargs="+", type=int, default=[0, 1, 2, 3, 4], help="start pose jitter; 0 = nominal")
     ap.add_argument("--decisions", type=int, default=90, help="move budget per episode (1 s of motion each)")
     ap.add_argument("--out", default="results")
+    ap.add_argument("--compare", nargs="+", metavar="RUN", help="only print the summary over these runs' episodes")
     args = ap.parse_args()
+    if args.compare:
+        rows = [r for r in load_rows(args.compare) if r.get("time_s") is not None]
+        print(summarize(rows, list(dict.fromkeys(r["brain"] for r in rows))))
+        return
 
     from kangaroo_systemone.perception import Perception
 
